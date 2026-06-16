@@ -35,7 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { PlusCircle, Search, XCircle, Info, Trash2, Download, FileSpreadsheet, MapPin, FileText, User, Building2, Phone, Fingerprint, Loader2, CheckSquare2, CalendarClock } from "lucide-react";
+import { PlusCircle, Search, XCircle, Info, Trash2, Download, FileSpreadsheet, MapPin, FileText, User, Building2, Phone, Fingerprint, Loader2, CheckSquare2, CalendarClock, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import AppLayout from "@/components/app-layout";
 import { useCollection, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
@@ -44,7 +44,7 @@ import { format, parseISO } from 'date-fns';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from '@/lib/utils';
-import { generatePaymentSummaryPdf } from '@/lib/payment-summary-generator';
+import { generatePaymentSummaryPdf, type ColumnConfig } from '@/lib/payment-summary-generator';
 import * as XLSX from 'xlsx';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -63,6 +63,17 @@ type ProcessedInvoice = Invoice & {
     tdsAmount: number;
     balance: number;
     status: Omit<PaymentStatus, 'All'>;
+};
+
+const defaultColumnConfigs: Record<string, ColumnConfig> = {
+    billNo: { label: 'Bill No.', align: 'center', visible: true },
+    date: { label: 'Date', align: 'center', visible: true },
+    company: { label: 'Company Name', align: 'left', visible: true },
+    billed: { label: 'Billed Amt', align: 'right', visible: true },
+    received: { label: 'Received', align: 'right', visible: true },
+    tds: { label: 'TDS', align: 'right', visible: true },
+    balance: { label: 'Balance', align: 'right', visible: true },
+    dueDays: { label: 'Due Days', align: 'center', visible: false }
 };
 
 export default function PaymentsPage() {
@@ -111,16 +122,7 @@ export default function PaymentsPage() {
   const [tempClientGstin, setTempClientGstin] = useState('');
   const [tempFirmGstin, setTempFirmGstin] = useState('');
   const [tempFirmMobiles, setTempFirmMobiles] = useState('');
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
-    billNo: true,
-    date: true,
-    company: true,
-    billed: true,
-    received: true,
-    tds: true,
-    balance: true,
-    dueDays: false // Default to false but available
-  });
+  const [columnConfigs, setColumnConfigs] = useState<Record<string, ColumnConfig>>(defaultColumnConfigs);
 
 
   // Payment Form State
@@ -329,7 +331,7 @@ export default function PaymentsPage() {
             customSubject: tempSubject,
             customDescription: tempDescription,
             salutation: tempSalutation,
-            visibleColumns: visibleColumns
+            columnConfigs: columnConfigs
         });
         toast({ title: 'Downloading', description: `Balance Confirmation Letter for ${tempClientName} is ready.` });
     } finally {
@@ -481,8 +483,11 @@ export default function PaymentsPage() {
     }
   }
 
-  const updateVisibleColumn = (key: string, checked: boolean) => {
-    setVisibleColumns(prev => ({ ...prev, [key]: checked }));
+  const updateColumnConfig = (key: string, updates: Partial<ColumnConfig>) => {
+    setColumnConfigs(prev => ({
+        ...prev,
+        [key]: { ...prev[key], ...updates }
+    }));
   }
 
 
@@ -787,7 +792,7 @@ export default function PaymentsPage() {
         
         {/* Download Summary Customization Dialog */}
         <Dialog open={isDownloadPromptOpen} onOpenChange={setIsDownloadPromptOpen}>
-            <DialogContent className="max-w-[95vw] sm:max-w-2xl rounded-2xl border-none shadow-2xl p-0 overflow-hidden max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+            <DialogContent className="max-w-[95vw] sm:max-w-4xl rounded-2xl border-none shadow-2xl p-0 overflow-hidden max-h-[95vh] sm:max-h-[90vh] flex flex-col">
                 <DialogHeader className="p-4 sm:p-6 bg-primary/5 border-b border-primary/10 shrink-0">
                     <DialogTitle className="flex items-center gap-2">
                         <FileText className="h-5 w-5 text-primary" />
@@ -798,39 +803,56 @@ export default function PaymentsPage() {
                     </DialogDescription>
                 </DialogHeader>
                 
-                {/* Scrollable Form Container */}
                 <div className="flex-1 overflow-y-auto">
                     <div className="p-4 sm:p-6 space-y-8">
-                        {/* Section: Table Columns Selection */}
+                        {/* Section: Table Columns Selection & Names */}
                         <div className="space-y-4">
                             <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                                <CheckSquare2 className="h-3 w-3" /> Table Columns
+                                <CheckSquare2 className="h-3 w-3" /> Table Columns & Alignment
                             </h3>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-muted/20 p-4 rounded-xl border border-dashed">
-                                {[
-                                    { id: 'billNo', label: 'Bill No.' },
-                                    { id: 'date', label: 'Date' },
-                                    { id: 'company', label: 'Company Name' },
-                                    { id: 'billed', label: 'Billed Amt' },
-                                    { id: 'received', label: 'Received' },
-                                    { id: 'tds', label: 'TDS' },
-                                    { id: 'balance', label: 'Balance' },
-                                    { id: 'dueDays', label: 'Due Days', icon: <CalendarClock className="h-3 w-3" /> }
-                                ].map((col) => (
-                                    <div key={col.id} className="flex items-center space-x-2">
-                                        <Checkbox 
-                                            id={`col-${col.id}`} 
-                                            checked={visibleColumns[col.id]} 
-                                            onCheckedChange={(checked) => updateVisibleColumn(col.id, !!checked)} 
-                                        />
-                                        <Label htmlFor={`col-${col.id}`} className="text-xs font-bold cursor-pointer flex items-center gap-1.5">
-                                            {col.label}
-                                            {col.icon}
-                                        </Label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {Object.keys(columnConfigs).map((id) => (
+                                    <div key={id} className="bg-muted/20 p-3 rounded-xl border border-dashed space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox 
+                                                    id={`col-${id}`} 
+                                                    checked={columnConfigs[id].visible} 
+                                                    onCheckedChange={(checked) => updateColumnConfig(id, { visible: !!checked })} 
+                                                />
+                                                <Label htmlFor={`col-${id}`} className="text-xs font-black uppercase tracking-tight">Active</Label>
+                                            </div>
+                                            <div className="flex items-center bg-background rounded-lg border p-0.5">
+                                                {(['left', 'center', 'right'] as const).map(align => (
+                                                    <Button 
+                                                        key={align} 
+                                                        variant={columnConfigs[id].align === align ? 'default' : 'ghost'} 
+                                                        size="icon" 
+                                                        className="h-6 w-6 rounded-md"
+                                                        onClick={() => updateColumnConfig(id, { align })}
+                                                    >
+                                                        {align === 'left' && <AlignLeft className="h-3 w-3" />}
+                                                        {align === 'center' && <AlignCenter className="h-3 w-3" />}
+                                                        {align === 'right' && <AlignRight className="h-3 w-3" />}
+                                                    </Button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-[9px] font-bold uppercase text-muted-foreground">Label Name</Label>
+                                            <Input 
+                                                value={columnConfigs[id].label}
+                                                onChange={(e) => updateColumnConfig(id, { label: e.target.value })}
+                                                className="h-8 text-xs font-bold"
+                                                placeholder="Header Name"
+                                            />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
+
+                        <Separator className="opacity-50" />
 
                         {/* Section: Document Metadata */}
                         <div className="space-y-4">

@@ -16,6 +16,12 @@ type ProcessedInvoice = {
     enterprise: string;
 };
 
+export type ColumnConfig = {
+    label: string;
+    align: 'left' | 'center' | 'right';
+    visible: boolean;
+};
+
 const loadImage = (url: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
         if (typeof window === 'undefined') {
@@ -46,23 +52,14 @@ export const generatePaymentSummaryPdf = async (
         customSubject?: string;
         customDescription?: string;
         salutation?: string;
-        visibleColumns?: Record<string, boolean>;
+        columnConfigs: Record<string, ColumnConfig>;
     }
 ) => {
     const doc = new jsPDF('p', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     
-    const cols = filters.visibleColumns || {
-        billNo: true,
-        date: true,
-        company: true,
-        billed: true,
-        received: true,
-        tds: true,
-        balance: true,
-        dueDays: false
-    };
+    const configs = filters.columnConfigs;
     
     const isRV = enterprise.toLowerCase().includes('rv');
     const themeColor: [number, number, number] = isRV ? [0, 51, 102] : [200, 0, 0]; 
@@ -79,7 +76,6 @@ export const generatePaymentSummaryPdf = async (
     doc.setTextColor(themeColor[0], themeColor[1], themeColor[2]);
     doc.text(`GSTIN: ${filters.firmGstin || 'N/A'}`, 15, topPadding + 8);
     
-    // Dynamic Right Header (Mob & Email)
     if (isRV) {
         doc.text(`Mob: 9987559327`, pageWidth - 15, topPadding + 8, { align: 'right' });
         doc.setFontSize(8);
@@ -89,13 +85,11 @@ export const generatePaymentSummaryPdf = async (
     }
 
     if (isRV) {
-        // Special Header for R.V. ENTERPRISES
         doc.setFontSize(36);
         doc.setFont('times', 'bold');
         doc.setTextColor(themeColor[0], themeColor[1], themeColor[2]);
         doc.text(`R.V. ENTERPRISES`, pageWidth / 2, topPadding + 22, { align: 'center' });
 
-        // Subtitle
         const subtitle = "Suppliers of Material Handling Equipment & Labour";
         doc.setFontSize(11);
         doc.setFont('helvetica', 'bold');
@@ -104,7 +98,6 @@ export const generatePaymentSummaryPdf = async (
         const subY = topPadding + 28;
         doc.text(subtitle, subX, subY, { align: 'center' });
 
-        // Decoration lines
         const edgeGap = 10;
         const textGap = 3; 
         const lineSpacing = 0.7;
@@ -127,7 +120,6 @@ export const generatePaymentSummaryPdf = async (
         doc.setLineWidth(0.5);
         doc.line(0, topPadding + 34, pageWidth, topPadding + 34);
     } else {
-        // Standard Vithal Enterprises Header
         doc.setFontSize(30);
         doc.setFont('times', 'bold');
         doc.setTextColor(themeColor[0], themeColor[1], themeColor[2]);
@@ -147,7 +139,6 @@ export const generatePaymentSummaryPdf = async (
 
     let currentY = isRV ? topPadding + 54 : topPadding + 48;
     
-    // --- Date and "To" Section ---
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(0, 0, 0);
@@ -205,32 +196,36 @@ export const generatePaymentSummaryPdf = async (
     doc.text(introLines, 15, currentY);
     currentY += (introLines.length * 5) + 5;
 
-    const headers: string[] = [];
-    if (cols.billNo) headers.push('Bill No.');
-    if (cols.date) headers.push('Date');
-    if (cols.company) headers.push('Company Name');
-    if (cols.billed) headers.push('Billed Amt');
-    if (cols.received) headers.push('Received');
-    if (cols.tds) headers.push('TDS');
-    if (cols.balance) headers.push('Balance');
-    if (cols.dueDays) headers.push('Due Days');
+    // --- Dynamic Column Building ---
+    const activeColIds = [
+        'billNo', 'date', 'company', 'billed', 'received', 'tds', 'balance', 'dueDays'
+    ].filter(id => configs[id]?.visible);
+
+    const headers = activeColIds.map(id => configs[id].label);
+    const columnStyles: Record<number, any> = {};
+    activeColIds.forEach((id, index) => {
+        columnStyles[index] = { halign: configs[id].align };
+    });
 
     const today = new Date();
-
     const tableBody = invoices.map(inv => {
         const row: string[] = [];
-        if (cols.billNo) row.push(`${inv.billNo}-${inv.billNoSuffix || 'MHE'}`);
-        if (cols.date) row.push(format(new Date(inv.billDate), 'dd-MMM-yy'));
-        if (cols.company) row.push(inv.companyName.toUpperCase());
-        if (cols.billed) row.push(inv.grandTotal.toLocaleString('en-IN'));
-        if (cols.received) row.push(inv.totalPaid.toLocaleString('en-IN'));
-        if (cols.tds) row.push(inv.tdsAmount.toLocaleString('en-IN'));
-        if (cols.balance) row.push(inv.balance.toLocaleString('en-IN'));
-        if (cols.dueDays) {
-            const billDate = parseISO(inv.billDate);
-            const days = differenceInDays(today, billDate);
-            row.push(days > 0 ? `${days} Days` : '0');
-        }
+        activeColIds.forEach(id => {
+            switch(id) {
+                case 'billNo': row.push(`${inv.billNo}-${inv.billNoSuffix || 'MHE'}`); break;
+                case 'date': row.push(format(new Date(inv.billDate), 'dd-MMM-yy')); break;
+                case 'company': row.push(inv.companyName.toUpperCase()); break;
+                case 'billed': row.push(inv.grandTotal.toLocaleString('en-IN')); break;
+                case 'received': row.push(inv.totalPaid.toLocaleString('en-IN')); break;
+                case 'tds': row.push(inv.tdsAmount.toLocaleString('en-IN')); break;
+                case 'balance': row.push(inv.balance.toLocaleString('en-IN')); break;
+                case 'dueDays': 
+                    const billDate = parseISO(inv.billDate);
+                    const days = differenceInDays(today, billDate);
+                    row.push(days > 0 ? `${days} Days` : '0'); 
+                    break;
+            }
+        });
         return row;
     });
 
@@ -239,22 +234,16 @@ export const generatePaymentSummaryPdf = async (
     const totalPaid = invoices.reduce((sum, inv) => sum + inv.totalPaid, 0);
     const totalTds = invoices.reduce((sum, inv) => sum + inv.tdsAmount, 0);
 
-    const footRow: string[] = ['TOTAL'];
-    const totalData: Record<string, string> = {
-        billed: totalBilled.toLocaleString('en-IN'),
-        received: totalPaid.toLocaleString('en-IN'),
-        tds: totalTds.toLocaleString('en-IN'),
-        balance: totalBalance.toLocaleString('en-IN')
-    };
-
-    for (let i = 1; i < headers.length; i++) {
-        const header = headers[i];
-        if (header === 'Billed Amt') footRow.push(totalData.billed);
-        else if (header === 'Received') footRow.push(totalData.received);
-        else if (header === 'TDS') footRow.push(totalData.tds);
-        else if (header === 'Balance') footRow.push(totalData.balance);
-        else footRow.push('');
-    }
+    const footRow = activeColIds.map((id, index) => {
+        if (index === 0) return 'TOTAL';
+        switch(id) {
+            case 'billed': return totalBilled.toLocaleString('en-IN');
+            case 'received': return totalPaid.toLocaleString('en-IN');
+            case 'tds': return totalTds.toLocaleString('en-IN');
+            case 'balance': return totalBalance.toLocaleString('en-IN');
+            default: return '';
+        }
+    });
 
     autoTable(doc, {
         startY: currentY,
@@ -286,6 +275,7 @@ export const generatePaymentSummaryPdf = async (
             lineWidth: 0.1,
             font: 'helvetica'
         },
+        columnStyles: columnStyles
     });
 
     const finalY = (doc as any).lastAutoTable.finalY + 12;
