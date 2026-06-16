@@ -65,15 +65,15 @@ type ProcessedInvoice = Invoice & {
     status: Omit<PaymentStatus, 'All'>;
 };
 
-const defaultColumnConfigs: Record<string, ColumnConfig> = {
-    billNo: { label: 'Bill No.', align: 'center', visible: true },
-    date: { label: 'Date', align: 'center', visible: true },
-    company: { label: 'Company Name', align: 'left', visible: true },
-    billed: { label: 'Billed Amt', align: 'right', visible: true },
-    received: { label: 'Received', align: 'right', visible: true },
-    tds: { label: 'TDS', align: 'right', visible: true },
-    balance: { label: 'Balance', align: 'right', visible: true },
-    dueDays: { label: 'Due Days', align: 'center', visible: false }
+const defaultColumnConfigs: Record<string, ColumnConfig & { title: string }> = {
+    billNo: { title: 'Bill Number', label: 'Bill No.', align: 'center', visible: true },
+    date: { title: 'Invoice Date', label: 'Date', align: 'center', visible: true },
+    company: { title: 'Client Name', label: 'Company Name', align: 'left', visible: true },
+    billed: { title: 'Billed Amount', label: 'Billed Amt', align: 'right', visible: true },
+    received: { title: 'Received Amount', label: 'Received', align: 'right', visible: true },
+    tds: { title: 'TDS Deduction', label: 'TDS', align: 'right', visible: true },
+    balance: { title: 'Pending Amount', label: 'Pending Amt', align: 'right', visible: true },
+    dueDays: { title: 'Payment Delay', label: 'Due Days', align: 'center', visible: false }
 };
 
 export default function PaymentsPage() {
@@ -122,7 +122,7 @@ export default function PaymentsPage() {
   const [tempClientGstin, setTempClientGstin] = useState('');
   const [tempFirmGstin, setTempFirmGstin] = useState('');
   const [tempFirmMobiles, setTempFirmMobiles] = useState('');
-  const [columnConfigs, setColumnConfigs] = useState<Record<string, ColumnConfig>>(defaultColumnConfigs);
+  const [columnConfigs, setColumnConfigs] = useState<Record<string, ColumnConfig & { title: string }>>(defaultColumnConfigs);
 
 
   // Payment Form State
@@ -814,13 +814,16 @@ export default function PaymentsPage() {
                                 {Object.keys(columnConfigs).map((id) => (
                                     <div key={id} className="bg-muted/20 p-3 rounded-xl border border-dashed space-y-3">
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center space-x-2">
-                                                <Checkbox 
-                                                    id={`col-${id}`} 
-                                                    checked={columnConfigs[id].visible} 
-                                                    onCheckedChange={(checked) => updateColumnConfig(id, { visible: !!checked })} 
-                                                />
-                                                <Label htmlFor={`col-${id}`} className="text-xs font-black uppercase tracking-tight">Active</Label>
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] font-black uppercase text-foreground/80">{columnConfigs[id].title}</span>
+                                                <div className="flex items-center space-x-2 mt-1">
+                                                    <Checkbox 
+                                                        id={`col-${id}`} 
+                                                        checked={columnConfigs[id].visible} 
+                                                        onCheckedChange={(checked) => updateColumnConfig(id, { visible: !!checked })} 
+                                                    />
+                                                    <Label htmlFor={`col-${id}`} className="text-[10px] font-bold text-muted-foreground uppercase cursor-pointer">Include in Table</Label>
+                                                </div>
                                             </div>
                                             <div className="flex items-center bg-background rounded-lg border p-0.5">
                                                 {(['left', 'center', 'right'] as const).map(align => (
@@ -839,7 +842,7 @@ export default function PaymentsPage() {
                                             </div>
                                         </div>
                                         <div className="space-y-1">
-                                            <Label className="text-[9px] font-bold uppercase text-muted-foreground">Label Name</Label>
+                                            <Label className="text-[9px] font-bold uppercase text-muted-foreground">PDF Header Label</Label>
                                             <Input 
                                                 value={columnConfigs[id].label}
                                                 onChange={(e) => updateColumnConfig(id, { label: e.target.value })}
