@@ -1,4 +1,3 @@
-
 'use client';
 import React, { useState, useMemo, useCallback, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import AppLayout from "@/components/app-layout";
@@ -442,7 +441,7 @@ const InvoiceList = ({
                                                                   aria-checked={isSelected}
                                                                 >
                                                                     {isSelected && (
-                                                                        <span className="text-[10px] font-bold leading-none">{selectionIndex}</span>
+                                                                        <span className="text-[10px] font-bold Brassica leading-none">{selectionIndex}</span>
                                                                     )}
                                                                 </div>
                                                             </TableCell>
@@ -606,28 +605,6 @@ export default function BillingPage() {
     }
   }, [myCompanyDetails]);
 
-  // AI Voice Command Listener
-  useEffect(() => {
-    const handleVoiceFill = (event: any) => {
-        const { intent, data } = event.detail;
-        if (intent === 'invoice') {
-            openFormDialog(null);
-            if (data.companyName) {
-                const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
-                if (matched) setCompanyId(matched.id);
-            }
-            if (data.amount) {
-                setItems([{ key: `item-${Date.now()}`, particulars: 'Service Charge', rate: '', amount: data.amount }]);
-            }
-            if (data.billingMonth) {
-                setBillingMonth(data.billingMonth);
-            }
-        }
-    };
-    window.addEventListener('ai-form-fill', handleVoiceFill);
-    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
-  }, [companies, openFormDialog]);
-  
   const handleDelayedAction = (action: () => void) => {
     setTimeout(action, 100);
   };
@@ -704,6 +681,27 @@ export default function BillingPage() {
     handleDelayedAction(() => setIsFormDialogOpen(true));
   }, [ activeTab, liveDefaultPageSettings, liveDefaultTemplate, resetForm ]);
 
+  // AI Voice Command Listener (Placed after openFormDialog definition)
+  useEffect(() => {
+    const handleVoiceFill = (event: any) => {
+        const { intent, data } = event.detail;
+        if (intent === 'invoice') {
+            openFormDialog(null);
+            if (data.companyName) {
+                const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
+                if (matched) setCompanyId(matched.id);
+            }
+            if (data.amount) {
+                setItems([{ key: `item-${Date.now()}`, particulars: 'Service Charge', rate: '', amount: data.amount }]);
+            }
+            if (data.billingMonth) {
+                setBillingMonth(data.billingMonth);
+            }
+        }
+    };
+    window.addEventListener('ai-form-fill', handleVoiceFill);
+    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
+  }, [companies, openFormDialog]);
 
   const openPreviewDialog = useCallback((invoice: Invoice) => {
     setInvoiceForPreview(invoice);

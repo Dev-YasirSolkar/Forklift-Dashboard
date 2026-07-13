@@ -1,4 +1,3 @@
-
 'use client';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
@@ -41,7 +40,7 @@ import AppLayout from "@/components/app-layout";
 import { useCollection, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { Invoice, Company, Payment, CompanySettings } from '@/lib/data';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, differenceInDays } from 'date-fns';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from '@/lib/utils';
@@ -149,25 +148,6 @@ export default function PaymentsPage() {
     }
   }, [yearFilter]);
 
-  // AI Voice Command Listener
-  useEffect(() => {
-    const handleVoiceFill = (event: any) => {
-        const { intent, data } = event.detail;
-        if (intent === 'payment') {
-            const billNoToMatch = data.billNo;
-            const matchedInvoice = processedInvoices.find(inv => inv.billNo.toString() === billNoToMatch?.toString() && inv.enterprise === activeTab);
-            if (matchedInvoice) {
-                handleOpenPaymentDialog(matchedInvoice);
-                if (data.amount) setReceivedAmount(data.amount.toString());
-                if (data.mode) setPaymentMode(data.mode.toUpperCase() as PaymentMode);
-            }
-        }
-    };
-    window.addEventListener('ai-form-fill', handleVoiceFill);
-    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
-  }, [processedInvoices, activeTab]);
-
-
   const getPaymentDetails = useCallback((invoiceId: string) => {
     const relevantPayments = payments?.filter(p => p.invoiceId === invoiceId) || [];
     const totalPaid = relevantPayments.reduce((acc, p) => acc + p.receivedAmount, 0);
@@ -215,6 +195,36 @@ export default function PaymentsPage() {
       };
     });
   }, [invoices, companies, getPaymentDetails]);
+
+  const handleOpenPaymentDialog = useCallback((invoice: ProcessedInvoice) => {
+    closeAllDialogs();
+    setSelectedInvoiceForPayment(invoice);
+    setPaymentDate(format(new Date(), 'yyyy-MM-dd'));
+    setReceivedAmount('');
+    setOtherDeductions('');
+    setNotes('');
+    setPaymentMode('RTGS');
+    setChequeDetails('');
+    setIsPaymentDialogOpen(true);
+  }, [closeAllDialogs]);
+
+  // AI Voice Command Listener (Placed after handleOpenPaymentDialog definition)
+  useEffect(() => {
+    const handleVoiceFill = (event: any) => {
+        const { intent, data } = event.detail;
+        if (intent === 'payment') {
+            const billNoToMatch = data.billNo;
+            const matchedInvoice = processedInvoices.find(inv => inv.billNo.toString() === billNoToMatch?.toString() && inv.enterprise === activeTab);
+            if (matchedInvoice) {
+                handleOpenPaymentDialog(matchedInvoice);
+                if (data.amount) setReceivedAmount(data.amount.toString());
+                if (data.mode) setPaymentMode(data.mode.toUpperCase() as PaymentMode);
+            }
+        }
+    };
+    window.addEventListener('ai-form-fill', handleVoiceFill);
+    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
+  }, [processedInvoices, activeTab, handleOpenPaymentDialog]);
   
   const availableYears = useMemo(() => {
     if (!processedInvoices) return [];
@@ -389,18 +399,6 @@ export default function PaymentsPage() {
     toast({ title: 'Excel Downloaded', description: 'Payment records saved to your device.' });
   }
 
-  const handleOpenPaymentDialog = (invoice: ProcessedInvoice) => {
-    closeAllDialogs();
-    setSelectedInvoiceForPayment(invoice);
-    setPaymentDate(format(new Date(), 'yyyy-MM-dd'));
-    setReceivedAmount('');
-    setOtherDeductions('');
-    setNotes('');
-    setPaymentMode('RTGS');
-    setChequeDetails('');
-    setIsPaymentDialogOpen(true);
-  };
-  
   const handleOpenDetailsDialog = (invoice: ProcessedInvoice) => {
     closeAllDialogs();
     setInvoiceForDetails(invoice);
