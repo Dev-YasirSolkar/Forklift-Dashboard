@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -114,6 +115,33 @@ export default function ChallansPage() {
         companies?.find(c => c.id === deliveryToId), 
         [companies, deliveryToId]
     );
+
+    // AI Voice Command Listener
+    useEffect(() => {
+        const handleVoiceFill = (event: any) => {
+            const { intent, data } = event.detail;
+            if (intent === 'challan') {
+                handleCreateNew();
+                if (data.companyName) {
+                    const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
+                    if (matched) {
+                        setDeliveryToId(matched.id);
+                    } else {
+                        setDeliveryToId('manual');
+                        setManualDeliveryToName(data.companyName);
+                    }
+                }
+                if (data.items) {
+                    setItems(data.items.map((item: string) => ({ particulars: item, amount: 0 })));
+                }
+                if (data.challanNo) {
+                    setChallanNo(data.challanNo);
+                }
+            }
+        };
+        window.addEventListener('ai-form-fill', handleVoiceFill);
+        return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
+    }, [companies]);
 
     // Sync From Address
     useEffect(() => {

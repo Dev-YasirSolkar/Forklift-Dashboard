@@ -1,3 +1,4 @@
+
 'use client';
 import React, { useState, useMemo, useCallback, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import AppLayout from "@/components/app-layout";
@@ -604,6 +605,28 @@ export default function BillingPage() {
         setGlobalPageSettings(myCompanyDetails);
     }
   }, [myCompanyDetails]);
+
+  // AI Voice Command Listener
+  useEffect(() => {
+    const handleVoiceFill = (event: any) => {
+        const { intent, data } = event.detail;
+        if (intent === 'invoice') {
+            openFormDialog(null);
+            if (data.companyName) {
+                const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
+                if (matched) setCompanyId(matched.id);
+            }
+            if (data.amount) {
+                setItems([{ key: `item-${Date.now()}`, particulars: 'Service Charge', rate: '', amount: data.amount }]);
+            }
+            if (data.billingMonth) {
+                setBillingMonth(data.billingMonth);
+            }
+        }
+    };
+    window.addEventListener('ai-form-fill', handleVoiceFill);
+    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
+  }, [companies, openFormDialog]);
   
   const handleDelayedAction = (action: () => void) => {
     setTimeout(action, 100);

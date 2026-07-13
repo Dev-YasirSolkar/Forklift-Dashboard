@@ -1,6 +1,14 @@
 
+import { genkit } from 'genkit';
+import { googleAI } from '@genkit-ai/google-genai';
+
 /**
  * @fileOverview Genkit initialization file.
- * This file is currently empty as AI features have been removed.
+ * Configures the Google AI plugin for use with Gemini models.
  */
-export {};
+
+export const ai = genkit({
+  plugins: [googleAI()],
+});
+
+export const model = 'googleai/gemini-1.5-flash';

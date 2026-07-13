@@ -1,3 +1,4 @@
+
 'use client';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
@@ -66,14 +67,14 @@ type ProcessedInvoice = Invoice & {
 };
 
 const defaultColumnConfigs: Record<string, ColumnConfig & { title: string }> = {
-    billNo: { title: 'Bill Number', label: 'Bill No.', align: 'center', visible: true },
-    date: { title: 'Invoice Date', label: 'Date', align: 'center', visible: true },
-    company: { title: 'Client Name', label: 'Company Name', align: 'left', visible: true },
-    billed: { title: 'Billed Amount', label: 'Billed Amt', align: 'right', visible: true },
-    received: { title: 'Received Amount', label: 'Received', align: 'right', visible: true },
-    tds: { title: 'TDS Deduction', label: 'TDS', align: 'right', visible: true },
-    balance: { title: 'Pending Amount', label: 'Pending Amt', align: 'right', visible: true },
-    dueDays: { title: 'Payment Delay', label: 'Due Days', align: 'center', visible: false }
+    billNo: { title: 'Invoice ID', label: 'Bill No.', align: 'center', visible: true },
+    date: { title: 'Invoice Creation Date', label: 'Date', align: 'center', visible: true },
+    company: { title: 'Recipient Company Name', label: 'Company Name', align: 'left', visible: true },
+    billed: { title: 'Gross Billed Amount', label: 'Billed Amt', align: 'right', visible: true },
+    received: { title: 'Actual Received Amount', label: 'Received', align: 'right', visible: true },
+    tds: { title: 'Tax Deducted at Source', label: 'TDS', align: 'right', visible: true },
+    balance: { title: 'Total Pending Amount', label: 'Pending Amt', align: 'right', visible: true },
+    dueDays: { title: 'Overdue Days Count', label: 'Due Days', align: 'center', visible: false }
 };
 
 export default function PaymentsPage() {
@@ -147,6 +148,24 @@ export default function PaymentsPage() {
       setMonthFilter('All');
     }
   }, [yearFilter]);
+
+  // AI Voice Command Listener
+  useEffect(() => {
+    const handleVoiceFill = (event: any) => {
+        const { intent, data } = event.detail;
+        if (intent === 'payment') {
+            const billNoToMatch = data.billNo;
+            const matchedInvoice = processedInvoices.find(inv => inv.billNo.toString() === billNoToMatch?.toString() && inv.enterprise === activeTab);
+            if (matchedInvoice) {
+                handleOpenPaymentDialog(matchedInvoice);
+                if (data.amount) setReceivedAmount(data.amount.toString());
+                if (data.mode) setPaymentMode(data.mode.toUpperCase() as PaymentMode);
+            }
+        }
+    };
+    window.addEventListener('ai-form-fill', handleVoiceFill);
+    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
+  }, [processedInvoices, activeTab]);
 
 
   const getPaymentDetails = useCallback((invoiceId: string) => {
@@ -292,7 +311,7 @@ export default function PaymentsPage() {
     setTempClientGstin(selectedCompanyObj?.gstin || '');
     setTempAddress(selectedCompanyObj?.address || '');
     setTempFirmGstin(settings?.gstin || '');
-    setTempFirmMobiles("9821728079, 9987559327");
+    setTempFirmMobiles("9987559327, 9821728079");
     setTempSalutation('Dear Sir,');
     
     let monthLabel = '';
