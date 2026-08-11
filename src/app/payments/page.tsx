@@ -35,7 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { PlusCircle, Search, XCircle, Info, Trash2, Download, FileSpreadsheet, MapPin, FileText, User, Building2, Phone, Fingerprint, Loader2, CheckSquare2, CalendarClock, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
+import { PlusCircle, Search, XCircle, Info, Trash2, Download, FileSpreadsheet, MapPin, FileText, User, Building2, Phone, Fingerprint, Loader2, CheckSquare2, CalendarClock, AlignLeft, AlignCenter, AlignRight, ChevronDown, ListFilter } from "lucide-react";
 import AppLayout from "@/components/app-layout";
 import { useCollection, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
@@ -50,9 +50,10 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Checkbox } from '@/components/ui/checkbox';
 import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 type Enterprise = 'Vithal' | 'RV';
-type PaymentStatus = 'All' | 'Received' | 'Partial' | 'Pending';
+type PaymentStatus = 'Received' | 'Partial' | 'Pending';
 type PaymentMode = 'RTGS' | 'NEFT' | 'IMPS' | 'CHEQUE' | 'CASH';
 
 type ProcessedInvoice = Invoice & {
@@ -62,7 +63,7 @@ type ProcessedInvoice = Invoice & {
     taxableAmount: number;
     tdsAmount: number;
     balance: number;
-    status: Omit<PaymentStatus, 'All'>;
+    status: PaymentStatus;
 };
 
 const defaultColumnConfigs: Record<string, ColumnConfig & { title: string }> = {
@@ -99,7 +100,7 @@ export default function PaymentsPage() {
   // Filters
   const [activeTab, setActiveTab] = useState<Enterprise>('Vithal');
   const [companyFilter, setCompanyFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState<PaymentStatus>('All');
+  const [statusFilters, setStatusFilters] = useState<PaymentStatus[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
   const [yearFilter, setYearFilter] = useState('All');
   const [monthFilter, setMonthFilter] = useState('All');
@@ -171,7 +172,7 @@ export default function PaymentsPage() {
       const rawBalance = invoice.grandTotal - totalCredited - tdsAmount;
       const roundedBalance = Math.round(rawBalance);
 
-      let status: Omit<PaymentStatus, 'All'>;
+      let status: PaymentStatus;
       let finalBalance = roundedBalance;
 
       if (roundedBalance <= 0) {
@@ -260,7 +261,7 @@ export default function PaymentsPage() {
       const monthMatch = monthFilter === 'All' || monthFromInvoice === monthFilter;
 
       const companyMatch = companyFilter === 'All' || invoice.companyId === companyFilter;
-      const statusMatch = statusFilter === 'All' || invoice.status === statusFilter;
+      const statusMatch = statusFilters.length === 0 || statusFilters.includes(invoice.status);
       
       const searchLower = searchFilter.toLowerCase();
       const searchMatch = searchFilter === '' ||
@@ -269,7 +270,7 @@ export default function PaymentsPage() {
 
       return yearMatch && monthMatch && companyMatch && statusMatch && searchMatch;
     });
-  }, [processedInvoices, activeTab, companyFilter, statusFilter, searchFilter, yearFilter, monthFilter]);
+  }, [processedInvoices, activeTab, companyFilter, statusFilters, searchFilter, yearFilter, monthFilter]);
   
   const monthlyGroupedInvoices = useMemo(() => {
     if (!filteredInvoices) return [];
@@ -302,7 +303,7 @@ export default function PaymentsPage() {
 
   const clearFilters = () => {
     setCompanyFilter('All');
-    setStatusFilter('All');
+    setStatusFilters([]);
     setSearchFilter('');
     setYearFilter('All');
     setMonthFilter('All');
@@ -487,7 +488,7 @@ export default function PaymentsPage() {
     }
   }
 
-  const getStatusBadge = (status: Omit<PaymentStatus, 'All'>) => {
+  const getStatusBadge = (status: PaymentStatus) => {
     switch (status) {
       case 'Received':
         return <Badge className="bg-green-600/80 dark:bg-green-500/80 text-white text-[10px] sm:text-xs">Received</Badge>;
@@ -506,6 +507,14 @@ export default function PaymentsPage() {
         [key]: { ...prev[key], ...updates }
     }));
   }
+
+  const toggleStatusFilter = (status: PaymentStatus) => {
+    setStatusFilters(prev => 
+        prev.includes(status) 
+            ? prev.filter(s => s !== status) 
+            : [...prev, status]
+    );
+  };
 
 
   return (
@@ -623,17 +632,56 @@ export default function PaymentsPage() {
                         {companies?.map(c => <SelectItem key={c.id} value={c.id} className="text-xs">{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as PaymentStatus)}>
-                      <SelectTrigger className="h-9 text-xs">
-                        <SelectValue placeholder="Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="All" className="text-xs">All Statuses</SelectItem>
-                        <SelectItem value="Received" className="text-xs">Received</SelectItem>
-                        <SelectItem value="Partial" className="text-xs">Partial</SelectItem>
-                        <SelectItem value="Pending" className="text-xs">Pending</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button variant="outline" size="sm" className="h-9 text-xs font-normal justify-between min-w-[120px]">
+                                <div className="flex items-center gap-2">
+                                    <ListFilter className="h-3.5 w-3.5 text-muted-foreground" />
+                                    {statusFilters.length === 0 ? "All Statuses" : `${statusFilters.length} Selected`}
+                                </div>
+                                <ChevronDown className="ml-1 h-3 w-3 opacity-50" />
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-48 p-2" align="start">
+                            <div className="space-y-1">
+                                <p className="text-[10px] font-black uppercase text-muted-foreground px-2 py-1 tracking-wider">Filter Status</p>
+                                <Separator className="mb-1" />
+                                {(['Received', 'Partial', 'Pending'] as PaymentStatus[]).map(s => (
+                                    <div 
+                                        key={s} 
+                                        className="flex items-center gap-2 px-2 py-1.5 hover:bg-accent rounded-md cursor-pointer transition-colors"
+                                        onClick={() => toggleStatusFilter(s)}
+                                    >
+                                        <Checkbox 
+                                            id={`status-${s}`} 
+                                            checked={statusFilters.includes(s)}
+                                            onCheckedChange={() => toggleStatusFilter(s)}
+                                        />
+                                        <label 
+                                            htmlFor={`status-${s}`} 
+                                            className="text-xs font-medium cursor-pointer flex-1 leading-none"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            {s}
+                                        </label>
+                                    </div>
+                                ))}
+                                {statusFilters.length > 0 && (
+                                    <>
+                                        <Separator className="my-1" />
+                                        <Button 
+                                            variant="ghost" 
+                                            className="w-full h-7 text-[10px] font-bold uppercase text-primary hover:text-primary"
+                                            onClick={() => setStatusFilters([])}
+                                        >
+                                            Reset Status
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
+                        </PopoverContent>
+                    </Popover>
                   </div>
                   <Button variant="ghost" onClick={clearFilters} className="w-full sm:w-auto h-9 text-xs">
                       <XCircle className="mr-2 h-4 w-4"/> Clear
