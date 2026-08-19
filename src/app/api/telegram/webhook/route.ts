@@ -9,6 +9,7 @@ import {
   getFleetStatus,
   getTodayAttendanceSummary,
   getMonthlyBillingSummary,
+  getTopPendingBalances,
   getAuthenticatedFirestore,
   renderFirmSelectionMenu,
   getUserActiveFirm,
@@ -23,7 +24,7 @@ export const maxDuration = 60;
 
 /**
  * @fileOverview Telegram Webhook Handler
- * Supports Admin business queries (Natural Language, Monospace Tables, Inline Radio Buttons) and Employee Salary Slips.
+ * Supports Admin business queries (Natural Language, Mobile Bullet Points, Inline Radio Buttons) and Employee Salary Slips.
  */
 
 const monthMap: Record<string, string> = {
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // 2. Company Disambiguation Selection
+        // 2. Company Selection / Intent Buttons
         if (cbData.startsWith('comp_select:') || cbData.startsWith('comp_pend:') || cbData.startsWith('comp_bills:') || cbData.startsWith('comp_fork:')) {
           const activeFirm = await getUserActiveFirm(chatId);
           let intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
@@ -174,7 +175,7 @@ export async function POST(req: Request) {
           await sendTelegramMessage(
             token,
             chatId,
-            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *NAMASTE ${firstName.toUpperCase()}! (ADMIN)* 👑\n🏢 Active Firm: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nAapka Admin session active hai. Aap ye queries puch sakte hain:\n\n📊 *Quick Shortcuts:*\n• 🏢 _"Bisleri pending"_\n• 🚜 _"Workshop"_\n• 📅 _"Today attendance"_\n• 💰 _"Revenue"_\n\n👇 *Select Active Firm below:*`,
+            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *NAMASTE ${firstName.toUpperCase()}! (ADMIN)* 👑\n🏢 Active Firm: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nAapka Admin session active hai. Aap ye queries puch sakte hain:\n\n📊 *Quick Shortcuts:*\n• 🏢 _"Bisleri pending"_\n• ⚠️ _"Top pending"_\n• 🚜 _"Workshop"_\n• 📅 _"Today attendance"_\n• 💰 _"Revenue"_\n\n👇 *Select Active Firm below:*`,
             renderFirmRadioButtons(activeFirm)
           );
         } else {
@@ -336,6 +337,34 @@ export async function POST(req: Request) {
   }
 }
 
+/**
+ * Splits long text into chunks of at most maxChars while respecting paragraph breaks.
+ */
+function splitMessageText(text: string, maxChars: number = 3800): string[] {
+  if (text.length <= maxChars) return [text];
+
+  const chunks: string[] = [];
+  const paragraphs = text.split(/\n\n+/);
+  let currentChunk = '';
+
+  for (const para of paragraphs) {
+    if ((currentChunk + '\n\n' + para).length > maxChars) {
+      if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = para;
+    } else {
+      currentChunk = currentChunk ? currentChunk + '\n\n' + para : para;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
+}
+
 async function sendTelegramMessage(
   token: string, 
   chatId: string, 
@@ -343,32 +372,40 @@ async function sendTelegramMessage(
   buttons?: Array<Array<{ text: string; callback_data: string }>>
 ) {
   try {
-    const payload: any = {
-      chat_id: chatId,
-      text: text,
-      parse_mode: 'Markdown',
-    };
+    const chunks = splitMessageText(text, 3800);
 
-    if (buttons && buttons.length > 0) {
-      payload.reply_markup = { inline_keyboard: buttons };
-    }
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const isLast = i === chunks.length - 1;
 
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const result = await res.json();
-    
-    // If Markdown parsing fails, retry in plain text
-    if (!result.ok) {
-      payload.text = text.replace(/[*_`]/g, '');
-      delete payload.parse_mode;
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const payload: any = {
+        chat_id: chatId,
+        text: chunk,
+        parse_mode: 'Markdown',
+      };
+
+      // Attach inline buttons only to the last message chunk
+      if (isLast && buttons && buttons.length > 0) {
+        payload.reply_markup = { inline_keyboard: buttons };
+      }
+
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const result = await res.json();
+      
+      // Fallback: If Markdown parsing fails, retry plain text
+      if (!result.ok) {
+        payload.text = chunk.replace(/[*_`]/g, '');
+        delete payload.parse_mode;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
     }
   } catch (err) {
     console.error('Failed to send Telegram text message:', err);

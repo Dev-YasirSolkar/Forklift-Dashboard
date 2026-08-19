@@ -1,9 +1,7 @@
 /**
- * @fileOverview Smart Telegram Assistant Module
- * Handles natural language querying over Firestore data for Admin & Employees.
- * Formats all data in clean, mobile-friendly bullet points with line breaks (zero ASCII tables).
- * Shows complete bill parameters: Basic Amount, GST, Grand Total, Received, TDS Deducted, Due & Status.
- * Supports month intelligence: 'previous month', 'last month', 'aug month bills', 'july revenue', etc.
+ * @fileOverview Super Smart Telegram Assistant Engine
+ * Enterprise-grade natural language processing, fuzzy company matching,
+ * top debtor rankings, bullet-point financial cards, and firm isolation.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -36,14 +34,14 @@ const awaitingFirmSelection = new Set<string>();
 export const ADMIN_SECRET_CODE = '2028';
 
 /**
- * Format currency in Indian number system with commas.
+ * Format currency in Indian format.
  */
 function formatInr(num: number): string {
   return Math.round(num || 0).toLocaleString('en-IN');
 }
 
 /**
- * Format a YYYY-MM-DD string into a readable date (e.g. 15 Aug 2026).
+ * Format date readable (e.g. 15 Jun 2026).
  */
 function formatDateReadable(dateStr: string): string {
   if (!dateStr) return 'N/A';
@@ -57,7 +55,7 @@ function formatDateReadable(dateStr: string): string {
 }
 
 /**
- * Safe whole word check.
+ * Clean word check with boundary.
  */
 function hasWord(text: string, word: string): boolean {
   const cleanWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -66,15 +64,44 @@ function hasWord(text: string, word: string): boolean {
 }
 
 /**
- * Month Parser: Detects mentions of specific or relative months in user prompt.
+ * Fuzzy similarity between two strings (0.0 to 1.0).
+ */
+function stringSimilarity(s1: string, s2: string): number {
+  const str1 = s1.toLowerCase().trim();
+  const str2 = s2.toLowerCase().trim();
+  if (str1 === str2) return 1.0;
+  if (str1.includes(str2) || str2.includes(str1)) return 0.85;
+
+  const pairs1 = getBigrams(str1);
+  const pairs2 = getBigrams(str2);
+  const union = pairs1.length + pairs2.length;
+  if (union === 0) return 0;
+
+  let hits = 0;
+  for (const p1 of pairs1) {
+    if (pairs2.includes(p1)) hits++;
+  }
+  return (2.0 * hits) / union;
+}
+
+function getBigrams(str: string): string[] {
+  const s = str.replace(/\s+/g, '');
+  const bigrams: string[] = [];
+  for (let i = 0; i < s.length - 1; i++) {
+    bigrams.push(s.slice(i, i + 2));
+  }
+  return bigrams;
+}
+
+/**
+ * Month Parser: Understands relative and named months.
  */
 export function extractTargetMonth(text: string): { monthKey: string; monthLabel: string } | null {
   const lower = text.toLowerCase();
   const now = new Date();
   const currentYear = now.getFullYear();
-  const currentMonthIdx = now.getMonth(); // 0-11
+  const currentMonthIdx = now.getMonth();
 
-  // 1. Relative: Previous Month / Last Month / Pichle Mahine
   if (
     lower.includes('last month') ||
     lower.includes('previous month') ||
@@ -90,7 +117,6 @@ export function extractTargetMonth(text: string): { monthKey: string; monthLabel
     return { monthKey: `${y}-${m}`, monthLabel: label };
   }
 
-  // 2. Relative: This Month / Current Month / Is Mahine
   if (
     lower.includes('this month') ||
     lower.includes('current month') ||
@@ -104,7 +130,6 @@ export function extractTargetMonth(text: string): { monthKey: string; monthLabel
     return { monthKey: `${y}-${m}`, monthLabel: label };
   }
 
-  // 3. Named Months (Jan - Dec)
   const monthNames: Record<string, number> = {
     'jan': 1, 'january': 1,
     'feb': 2, 'february': 2,
@@ -179,7 +204,7 @@ export async function isTelegramAdmin(chatId: string): Promise<boolean> {
 }
 
 /**
- * Get the active firm preference for the user (Defaults to 'Both').
+ * Get active firm preference (Defaults to 'Both').
  */
 export async function getUserActiveFirm(chatId: string): Promise<EnterpriseType> {
   if (userActiveFirmMap.has(chatId)) {
@@ -202,7 +227,7 @@ export async function getUserActiveFirm(chatId: string): Promise<EnterpriseType>
 }
 
 /**
- * Set the active firm preference for the user permanently.
+ * Set active firm preference permanently.
  */
 export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): Promise<AssistantResponse> {
   userActiveFirmMap.set(chatId, firm);
@@ -227,7 +252,7 @@ export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): P
 
   let msg = `✅ *Active Firm Updated:*\n*${label}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `Ab aapke saare bills, fleet aur revenue reports **${label}** ke hisaab se dikhayenge.\n\n`;
+  msg += `Ab saare bills, fleet aur revenue reports **${label}** ke hisaab se aayenge.\n\n`;
   msg += `_Firm change karne ke liye neeche button tap karein:_`;
 
   return {
@@ -311,8 +336,104 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 }
 
 /**
+ * Top Pending Outstanding Balances across all companies.
+ */
+export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both'): Promise<AssistantResponse> {
+  const firestore = await getAuthenticatedFirestore();
+  const [companiesSnap, invoicesSnap, paymentsSnap] = await Promise.all([
+    getDocs(collection(firestore, 'companies')),
+    getDocs(collection(firestore, 'invoices')),
+    getDocs(collection(firestore, 'payments')),
+  ]);
+
+  const companyMap = new Map<string, string>();
+  companiesSnap.docs.forEach(d => {
+    companyMap.set(d.id, String(d.data().name || 'Unknown Company'));
+  });
+
+  const invoiceBalanceMap: Record<string, { companyId: string; enterprise: string; billed: number; received: number }> = {};
+
+  invoicesSnap.docs.forEach(d => {
+    const inv = d.data();
+    const ent = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+    if (activeFirm !== 'Both' && ent !== activeFirm) return;
+
+    invoiceBalanceMap[d.id] = {
+      companyId: inv.companyId,
+      enterprise: ent,
+      billed: Number(inv.grandTotal || 0),
+      received: 0,
+    };
+  });
+
+  paymentsSnap.docs.forEach(d => {
+    const pay = d.data();
+    if (pay.invoiceId && invoiceBalanceMap[pay.invoiceId]) {
+      const rec = Number(pay.receivedAmount || 0);
+      const tds = Number(pay.tdsDeducted || 0);
+      const oth = Number(pay.otherDeductions || 0);
+      invoiceBalanceMap[pay.invoiceId].received += (rec + tds + oth);
+    }
+  });
+
+  const companyDueMap = new Map<string, { name: string; billed: number; received: number; due: number }>();
+
+  Object.values(invoiceBalanceMap).forEach(inv => {
+    const compName = companyMap.get(inv.companyId) || 'Unknown Company';
+    const due = Math.max(0, inv.billed - inv.received);
+    const existing = companyDueMap.get(inv.companyId) || { name: compName, billed: 0, received: 0, due: 0 };
+    existing.billed += inv.billed;
+    existing.received += inv.received;
+    existing.due += due;
+    companyDueMap.set(inv.companyId, existing);
+  });
+
+  const sortedDebtors = Array.from(companyDueMap.values())
+    .filter(c => c.due > 1)
+    .sort((a, b) => b.due - a.due);
+
+  const totalOutstanding = sortedDebtors.reduce((s, c) => s + c.due, 0);
+  const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+
+  let msg = `⚠️ *TOP OUTSTANDING DUE RANKING*\n`;
+  msg += `🏢 Firm Scope: *${firmLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `💎 *Total Market Outstanding:* *₹ ${formatInr(totalOutstanding)}*\n`;
+  msg += `👥 *Companies with Pending Balance:* *${sortedDebtors.length} Clients*\n\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `📊 *TOP PENDING CLIENTS:*\n\n`;
+
+  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+
+  sortedDebtors.slice(0, 10).forEach((c, idx) => {
+    msg += `${idx + 1}️⃣ *${c.name}*\n`;
+    msg += `• ⚠️ Pending Due: *₹ ${formatInr(c.due)}*\n`;
+    msg += `• 💰 Total Billed: ₹ ${formatInr(c.billed)} | Received: ₹ ${formatInr(c.received)}\n\n`;
+
+    if (idx < 5) {
+      buttons.push([
+        {
+          text: `🏢 ${c.name.slice(0, 24)}... (Due ₹${formatInr(c.due)})`,
+          callback_data: `comp_select:${c.name}`,
+        },
+      ]);
+    }
+  });
+
+  if (sortedDebtors.length > 10) {
+    msg += `_...and ${sortedDebtors.length - 10} more clients with smaller pending amounts._\n\n`;
+  }
+
+  msg += `👉 *Tap any client button below for complete bill details:*`;
+
+  return {
+    text: msg.trim(),
+    buttons,
+  };
+}
+
+/**
  * Query company details formatted with clean bullet points and line breaks.
- * Shows Summary + Full Detailed Bills with Basic Amount, GST, Grand Total, Received, TDS Deductions & Pending Due.
  */
 export async function getCompanyDetailByIntent(
   companyName: string, 
@@ -473,7 +594,6 @@ export async function getCompanyDetailByIntent(
     };
   }
 
-  // Sort chronologically by Date & Bill Number
   filteredInvoices.sort((a, b) => {
     const timeA = a.date ? new Date(a.date).getTime() : 0;
     const timeB = b.date ? new Date(b.date).getTime() : 0;
@@ -487,7 +607,6 @@ export async function getCompanyDetailByIntent(
 
   const unpaidInvoices = filteredInvoices.filter(inv => inv.due > 1);
 
-  // Totals calculations
   const totalBilled = filteredInvoices.reduce((s, i) => s + i.grandTotal, 0);
   const totalBasic = filteredInvoices.reduce((s, i) => s + i.netTotal, 0);
   const totalGst = filteredInvoices.reduce((s, i) => s + i.gstAmount, 0);
@@ -508,13 +627,11 @@ export async function getCompanyDetailByIntent(
   const firmHeader = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
   const monthHeader = targetMonth ? `📅 Period: *${targetMonth.monthLabel}*\n` : '';
 
-  // ─── BUILD RESPONSE TEXT WITH BOTH SUMMARY AND DETAILED BILLS ───────────
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `🏢 Firm Scope: *${firmHeader}*\n`;
   if (monthHeader) text += monthHeader;
   text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  // 1. Financial Summary Block
   text += `💰 *FINANCIAL SUMMARY:*\n`;
   if (activeFirm === 'Both') {
     text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
@@ -534,7 +651,6 @@ export async function getCompanyDetailByIntent(
 
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
 
-  // 2. Individual Bills Detailed Listing (Every bill with Basic, GST, Received, TDS, Due)
   const isOnlyPending = intent === 'pending';
   const displayInvoices = isOnlyPending ? unpaidInvoices : filteredInvoices;
   const sectionTitle = isOnlyPending 
@@ -791,7 +907,7 @@ export async function getTodayAttendanceSummary(): Promise<AssistantResponse> {
 }
 
 /**
- * Get monthly billing summary with month intelligence (previous month, aug, july, etc.).
+ * Get monthly billing summary with month intelligence.
  */
 export async function getMonthlyBillingSummary(
   activeFirm: EnterpriseType = 'Both', 
@@ -919,7 +1035,7 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization, firm isolation, month intelligence, and complete billing parameters.
+ * Dynamically queries Firestore with strict intent prioritization, fuzzy matching, ranking, and clean layout.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
@@ -963,37 +1079,59 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 2. ALL COMPANIES LIST ─────────────────────────────────────────────
+    // ─── 2. TOP OUTSTANDING DUE / DEBTORS LIST ─────────────────────────────
+    // e.g. "top pending", "kiske kitne baki hai", "who owes money", "pending list", "sabse zyada balance"
+    if (
+      lower.includes('top pending') ||
+      lower.includes('pending list') ||
+      lower.includes('baki list') ||
+      lower.includes('kiske kitne baki') ||
+      lower.includes('kiska balance') ||
+      lower.includes('sabse zyada balance') ||
+      lower.includes('sabse jyada baki') ||
+      lower.includes('debtors') ||
+      lower.includes('top due') ||
+      lower === 'pending' ||
+      lower === 'dues' ||
+      lower === 'balance'
+    ) {
+      return await getTopPendingBalances(activeFirm);
+    }
+
+    // ─── 3. ALL COMPANIES LIST ─────────────────────────────────────────────
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
       return await listAllCompanies();
     }
 
-    // ─── 3. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
+    // ─── 4. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
     if (
       hasWord(lower, 'workshop') ||
       hasWord(lower, 'idle') ||
       hasWord(lower, 'khade') ||
       hasWord(lower, 'khada') ||
       hasWord(lower, 'godown') ||
+      hasWord(lower, 'garage') ||
+      hasWord(lower, 'khali') ||
       lower.includes('workshop forklift') ||
       lower.includes('workshop me')
     ) {
       return await getFleetStatus('Workshop', activeFirm);
     }
 
-    // ─── 4. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
+    // ─── 5. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
     if (
       hasWord(lower, 'onsite') ||
       hasWord(lower, 'on-site') ||
       hasWord(lower, 'deployed') ||
       hasWord(lower, 'bahar') ||
       lower.includes('on site') ||
-      lower.includes('client site')
+      lower.includes('client site') ||
+      lower.includes('site par')
     ) {
       return await getFleetStatus('On-Site', activeFirm);
     }
 
-    // ─── 5. OVERALL FLEET SUMMARY ──────────────────────────────────────────
+    // ─── 6. OVERALL FLEET SUMMARY ──────────────────────────────────────────
     if (
       hasWord(lower, 'fleet') ||
       hasWord(lower, 'forklift') ||
@@ -1002,12 +1140,13 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       hasWord(lower, 'gaadi') ||
       hasWord(lower, 'machines') ||
       lower.includes('total unit') ||
-      lower.includes('total fleet')
+      lower.includes('total fleet') ||
+      lower.includes('total gadi')
     ) {
       return await getFleetStatus(undefined, activeFirm);
     }
 
-    // ─── 6. ATTENDANCE & STAFF ─────────────────────────────────────────────
+    // ─── 7. ATTENDANCE & STAFF ─────────────────────────────────────────────
     if (
       hasWord(lower, 'attendance') ||
       hasWord(lower, 'absent') ||
@@ -1017,18 +1156,23 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       lower.includes('kaun aya') ||
       lower.includes('kon aya') ||
       lower.includes('absent staff') ||
-      lower.includes('today attendance')
+      lower.includes('today attendance') ||
+      lower.includes('staff report') ||
+      lower.includes('kitne log')
     ) {
       return await getTodayAttendanceSummary();
     }
 
-    // ─── 7. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
+    // ─── 8. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
     const isBillingRequest = (
       hasWord(lower, 'billing') ||
       hasWord(lower, 'revenue') ||
       hasWord(lower, 'turnover') ||
+      hasWord(lower, 'collection') ||
+      hasWord(lower, 'kamai') ||
       lower.includes('total bill') ||
-      (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'collection')))
+      lower.includes('sales') ||
+      (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'hisab')))
     );
 
     if (isBillingRequest) {
@@ -1043,7 +1187,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 8. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
+    // ─── 9. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
     for (const d of forkliftsSnap.docs) {
       const sn = String(d.data().serialNumber || '').trim();
@@ -1052,7 +1196,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 9. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & MONTH FILTER ─
+    // ─── 10. DYNAMIC & FUZZY COMPANY NAME SEARCH ───────────────────────────
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
@@ -1075,17 +1219,19 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       'traders', 'trading', 'works', 'company', 'ka', 'ki', 'ke', 'details',
       'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill',
       'last', 'previous', 'month', 'jan', 'feb', 'mar', 'apr', 'may', 'jun',
-      'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+      'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'kaun', 'kitna', 'baki', 'due'
     ]);
 
     for (const companyFullName of allCompanyNames) {
       const companyLower = companyFullName.toLowerCase();
 
+      // Exact substring match
       if (lower.includes(companyLower)) {
         matchedCompanies.push(companyFullName);
         continue;
       }
 
+      // Brand word match
       const brandWords = companyLower
         .split(/[\s,./()]+/)
         .filter(w => w.length >= 3 && !stopWords.has(w));
@@ -1093,6 +1239,19 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       if (brandWords.some(w => hasWord(lower, w))) {
         if (!matchedCompanies.includes(companyFullName)) {
           matchedCompanies.push(companyFullName);
+        }
+        continue;
+      }
+
+      // Fuzzy typo check (e.g. "bislri" for "bisleri", "hindlco" for "hindalco")
+      const queryWords = lower.split(/[\s,./()]+/).filter(w => w.length >= 4 && !stopWords.has(w));
+      for (const qWord of queryWords) {
+        for (const bWord of brandWords) {
+          if (bWord.length >= 4 && stringSimilarity(qWord, bWord) >= 0.75) {
+            if (!matchedCompanies.includes(companyFullName)) {
+              matchedCompanies.push(companyFullName);
+            }
+          }
         }
       }
     }
@@ -1102,7 +1261,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     }
 
     if (matchedCompanies.length > 1) {
-      const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai|last|previous|month|aug|july|june)\b/gi, '').trim() || raw;
+      const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai|last|previous|month|aug|july|june|kiska|kitna)\b/gi, '').trim() || raw;
       return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
     }
 
@@ -1111,10 +1270,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     return { text: `⚠️ *Error accessing data:* ${err.message || 'Database error'}` };
   }
 
-  // Helpful response
+  // Helpful standard guide
   const activeFirm = await getUserActiveFirm(chatId);
   return {
-    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap ye puch sakte hain:\n\n• 🏢 *Company Details:* e.g. _"Bisleri pending"_, _"Bisleri Aug bills"_\n• 💰 *Monthly Revenue:* e.g. _"Last month billing"_, _"July revenue"_\n• 🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n• 📅 *Attendance:* e.g. _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
+    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap simple Hindi / English me ye puch sakte hain:\n\n• 🏢 *Company Bills / Due:* e.g. _"Bisleri pending"_, _"Bisleri Aug bills"_\n• ⚠️ *Top Pending Balance:* e.g. _"Top pending"_, _"Kiske kitne baki hai"_\n• 💰 *Monthly Revenue:* e.g. _"Last month billing"_, _"July revenue"_\n• 🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n• 📅 *Attendance:* e.g. _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
     buttons: renderFirmRadioButtons(activeFirm),
   };
 }
