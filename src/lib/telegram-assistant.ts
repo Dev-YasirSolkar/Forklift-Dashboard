@@ -1344,7 +1344,46 @@ ${topDebtors}
 }
 
 /**
- * Query Google Gemini AI model with live business grounding.
+ * Tests Gemini AI Connection and returns detailed diagnostic report.
+ */
+export async function testGeminiConnection(): Promise<string> {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
+    return `❌ *Gemini API Key Missing!*\n\n• Vercel Environment Variables me \`GEMINI_API_KEY\` add karein, YA\n• Telegram par \`/key AIzaSy...\` bhej kar key save karein.`;
+  }
+
+  const maskedKey = apiKey.slice(0, 6) + '...' + apiKey.slice(-4);
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
+  const errors: string[] = [];
+
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'Hello, reply with only the word "OK".' }] }]
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        return `✅ *Gemini AI is Fully Connected & Active!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\n• 🔑 API Key: \`${maskedKey}\`\n• 🚀 Model: \`${model}\`\n• ⚡ Response: "${text.trim()}"\n\nAb aap natural Hindi/Hinglish/English me koi bhi sawal pooch sakte hain!`;
+      } else {
+        const errText = await res.text();
+        errors.push(`${model} (HTTP ${res.status}): ${errText.slice(0, 100)}`);
+      }
+    } catch (e: any) {
+      errors.push(`${model}: ${e.message}`);
+    }
+  }
+
+  return `⚠️ *Gemini API Error with Key \`${maskedKey}\`:*\n\n${errors.join('\n\n')}\n\nKripya [Google AI Studio](https://aistudio.google.com/app/apikey) se new API key lekar \`/key <new_key>\` bhejein.`;
+}
+
+/**
+ * Query Google Gemini AI model with live business grounding and multi-model fallback.
  */
 async function queryGeminiAI(userPrompt: string, activeFirm: EnterpriseType): Promise<string | null> {
   const apiKey = await getGeminiApiKey();
@@ -1383,20 +1422,32 @@ YOUR MISSION:
       }
     };
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
 
-    if (!res.ok) {
-      console.warn('Gemini API returned status:', res.status);
-      return null;
+    for (const model of models) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          const answer = json.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (answer && answer.trim()) {
+            return answer.trim();
+          }
+        } else {
+          const errText = await res.text();
+          console.warn(`Gemini model ${model} failed (HTTP ${res.status}):`, errText);
+        }
+      } catch (err) {
+        console.warn(`Gemini fetch error on model ${model}:`, err);
+      }
     }
 
-    const json = await res.json();
-    const answer = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    return answer ? answer.trim() : null;
+    return null;
   } catch (err) {
     console.error('Gemini query failed:', err);
     return null;
@@ -1415,14 +1466,23 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     const firestore = await getAuthenticatedFirestore();
     const activeFirm = await getUserActiveFirm(chatId);
 
-    // ─── 0. CHECK IF USER WANTS TO SET GEMINI API KEY ───────────────────────
+    // ─── 0. CHECK IF USER WANTS TO TEST OR SET GEMINI API KEY ───────────────
+    if (lower === '/testai' || lower === '/aistatus' || lower === 'test ai' || lower === 'ai status') {
+      const diagReport = await testGeminiConnection();
+      return {
+        text: diagReport,
+        buttons: renderFirmRadioButtons(activeFirm),
+      };
+    }
+
     if (lower.startsWith('/key ') || lower.startsWith('/gemini ') || lower.startsWith('set key ')) {
       const key = raw.replace(/^(\/key|\/gemini|set key)\s+/i, '').trim();
       if (key.length > 10) {
         const saved = await saveGeminiApiKey(key);
         if (saved) {
+          const testRes = await testGeminiConnection();
           return {
-            text: `✨ *Gemini AI API Key Successfully Saved!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\nAb se bot me **Google Gemini AI** fully active hai! Aap kisi bhi natural language (Hindi/Hinglish/English) me sawaal pooch sakte hain.`,
+            text: `✨ *Gemini API Key Saved!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\n${testRes}`,
             buttons: renderFirmRadioButtons(activeFirm),
           };
         }
