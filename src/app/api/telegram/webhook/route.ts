@@ -66,7 +66,7 @@ export async function POST(req: Request) {
             await sendTelegramMessage(
               token,
               chatId,
-              `👑 *Admin Access Granted!*\n━━━━━━━━━━━━━━━━━━━━━\nWelcome Owner/Admin! You can now ask questions about *VE Dashboard* anytime in normal Hindi or English.\n\n*Try asking:*\n• _"Bisleri ka pending payment kitna hai?"_\n• _"Workshop me kitne forklifts hain?"_\n• _"Aaj attendance me kon absent hai?"_\n• _"Is mahine ka total billing batao"_\n━━━━━━━━━━━━━━━━━━━━━`
+              `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *ADMIN ACCESS GRANTED!* 👑\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 🙏 Welcome to your **24/7 VE Dashboard Assistant**.\n\nAap simple Hindi / English mein koi bhi business query puch sakte hain:\n\n💬 *Try asking:*\n• 🏢 _"Bisleri ka pending payment kitna hai?"_\n• 🚜 _"Workshop me kitne forklifts hain?"_\n• 📅 _"Aaj attendance me kon absent hai?"_\n• 💰 _"Is mahine ka total billing batao"_\n\n⚡ *Quick Commands:*\n• 🚜 \`/fleet\` ➔ Fleet summary\n• 📅 \`/attendance\` ➔ Today's attendance\n• 💰 \`/revenue\` ➔ Monthly billing\n• 🔍 \`/pending <Company>\` ➔ Due bills\n━━━━━━━━━━━━━━━━━━━━━━`
             );
             return NextResponse.json({ ok: true });
           } else {
@@ -91,17 +91,17 @@ export async function POST(req: Request) {
         }
       }
 
-      // ─── 2. START / HELP COMMAND ─────────────────────────────────────────
+      // ─── 2. START / HELP COMMAND (CUSTOM WELCOME MESSAGE) ─────────────────
       if (lowerText === '/start' || lowerText === 'id' || lowerText === '/id' || lowerText === '/help') {
         if (isAdmin) {
           await sendTelegramMessage(
             token,
             chatId,
-            `👑 *Hello ${firstName}! (Admin)* 👋\n\nWelcome to your *VE Dashboard Assistant*.\n\n*What you can ask:*\n• *Company Details & Due Bills:* _"Bisleri pending balance"_\n• *Fleet Location:* _"Workshop forklifts"_\n• *Attendance:* _"Today attendance"_\n• *Revenue:* _"This month billing"_\n\n_Just send a message in normal Hindi or English!_`
+            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *NAMASTE ${firstName.toUpperCase()}! (ADMIN)* 👑\n🏭 *VE Dashboard 24/7 Assistant*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nWelcome back! Aapka Admin Mode active hai. 🚀\n\n📊 *Aap Kya-Kya Puch Sakte Hain:*\n• 🏢 *Company & Balance:* _"Bisleri pending payment"_\n• 🚜 *Forklift Fleet:* _"Workshop forklifts"_\n• 📅 *Attendance:* _"Today attendance"_\n• 💰 *Revenue:* _"This month billing"_\n\n⚡ *Shortcuts:*\n• 🚜 \`/fleet\` ➔ Fleet Summary\n• 📅 \`/attendance\` ➔ Today's Attendance\n• 💰 \`/revenue\` ➔ Monthly Revenue\n• 🔍 \`/pending <Company>\` ➔ Company Pending Balance\n━━━━━━━━━━━━━━━━━━━━━━`
           );
         } else {
-          const responseText = `Hello ${firstName}! 👋\n\nWelcome to *VE Enterprises Dashboard Bot*.\n\nYour Unique Chat ID is:\n\`${chatId}\`\n\n*Technician Commands:*\n• \`/slip\` - Get latest salary summary.\n• \`/slips\` - List available months.\n• \`/slip Jan\` - Get PDF for January.\n\n*Admin?* Type \`/admin <Your Email>\` to unlock full dashboard access.`;
-          await sendTelegramMessage(token, chatId, responseText);
+          const welcomeMsg = `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n🚜 *WELCOME TO VE DASHBOARD BOT* 🚜\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 👋 Aapka swagat hai hamare automated service portal par.\n\n🔑 *Aapka Unique Chat ID:*\n\`${chatId}\`\n\n━━━━━━━━━━━━━━━━━━━━━━\n👑 *ADMIN / OWNER ACCESS:*\nAgar aap Owner/Admin hain, toh dashboard access unlock karne ke liye ye code bhejein:\n👉 \`/2028\`\n\n━━━━━━━━━━━━━━━━━━━━━━\n👷 *TECHNICIAN / STAFF COMMANDS:*\n• 📄 \`/slip\` ➔ Latest salary summary\n• 📑 \`/slips\` ➔ All available salary slips\n• 📥 \`/slip Jan\` ➔ Specific month ki PDF slip\n\n━━━━━━━━━━━━━━━━━━━━━━\n_Type \`/help\` anytime for assistance._`;
+          await sendTelegramMessage(token, chatId, welcomeMsg);
         }
         return NextResponse.json({ ok: true });
       }
