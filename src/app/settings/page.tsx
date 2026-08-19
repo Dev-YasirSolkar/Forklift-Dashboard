@@ -411,28 +411,54 @@ export default function SettingsPage() {
                 </div>
 
                 <Card className="border-none shadow-lg bg-gradient-to-br from-blue-600 to-blue-800 text-white overflow-hidden relative group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <Send className="h-12 w-12 -rotate-12" />
+                    <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none select-none">
+                        <Send className="h-16 w-16 -rotate-12 pointer-events-none" />
                     </div>
-                    <CardHeader className="p-3 sm:p-4 pb-2">
-                        <div className="flex flex-row items-center justify-between gap-2">
+                    <CardHeader className="p-3 sm:p-4 pb-3 relative z-10">
+                        <div className="flex flex-row items-center justify-between gap-3">
                             <div className="space-y-1">
                                 <CardTitle className="flex items-center gap-2 text-sm sm:text-lg font-black">
-                                    <Send className="h-4 w-4" /> Telegram Bot
+                                    <Send className="h-4 w-4" /> Telegram Bot Assistant
                                 </CardTitle>
-                                <CardDescription className="text-blue-100/70 text-[9px] sm:text-xs font-medium">
-                                    Manage automation for salary slips.
+                                <CardDescription className="text-blue-100/80 text-[10px] sm:text-xs font-medium">
+                                    Connect <a href="https://t.me/VE_ECC_bot" target="_blank" rel="noreferrer" className="underline font-bold text-white hover:text-blue-200">@VE_ECC_bot</a> for instant business queries & salary slips.
                                 </CardDescription>
                             </div>
-                            {botReady ? (
-                                <Badge className="bg-emerald-500 text-white border-none py-0.5 px-2 rounded-lg text-[8px] font-bold">
-                                    Connected
-                                </Badge>
-                            ) : (
-                                <Button onClick={handleInitTelegram} disabled={isBotSettingUp} size="sm" className="h-7 bg-white text-blue-700 hover:bg-blue-50 rounded-xl font-bold uppercase tracking-tight text-[9px] px-3">
-                                    {isBotSettingUp ? "..." : "Connect"}
-                                </Button>
-                            )}
+                            <div className="flex items-center gap-2 shrink-0">
+                                {botReady ? (
+                                    <div className="flex items-center gap-1.5">
+                                        <Badge className="bg-emerald-500 text-white border-none py-1 px-2.5 rounded-lg text-[9px] font-bold shadow-sm">
+                                            <CheckCircle2 className="h-3 w-3 mr-1" /> Connected
+                                        </Badge>
+                                        <Button
+                                            onClick={handleInitTelegram}
+                                            disabled={isBotSettingUp}
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 text-white/80 hover:text-white hover:bg-white/10 rounded-lg text-[9px] px-2"
+                                            title="Reconnect Webhook"
+                                        >
+                                            <RefreshCw className={cn("h-3 w-3", isBotSettingUp && "animate-spin")} />
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <Button
+                                        onClick={handleInitTelegram}
+                                        disabled={isBotSettingUp}
+                                        size="sm"
+                                        className="h-8 bg-white text-blue-700 hover:bg-blue-50 shadow-md rounded-xl font-bold uppercase tracking-tight text-[10px] px-4 cursor-pointer"
+                                    >
+                                        {isBotSettingUp ? (
+                                            <>
+                                                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                                Connecting...
+                                            </>
+                                        ) : (
+                                            "Connect Bot"
+                                        )}
+                                    </Button>
+                                )}
+                            </div>
                         </div>
                     </CardHeader>
                 </Card>
