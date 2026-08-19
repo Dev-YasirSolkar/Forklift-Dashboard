@@ -4,7 +4,7 @@
  */
 
 import { initializeFirebase } from '@/firebase';
-import { collection, query, where, getDocs, getDoc, doc, setDoc, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc, setDoc } from 'firebase/firestore';
 
 interface CompanySummary {
   id: string;
@@ -26,8 +26,8 @@ export const ADMIN_SECRET_CODE = '2028';
 export async function isTelegramAdmin(chatId: string): Promise<boolean> {
   if (verifiedAdminChatIds.has(chatId)) return true;
 
-  const { firestore } = initializeFirebase();
   try {
+    const { firestore } = initializeFirebase();
     const adminDoc = await getDoc(doc(firestore, 'telegramAdmins', chatId));
     if (adminDoc.exists()) {
       verifiedAdminChatIds.add(chatId);
@@ -85,10 +85,19 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   // 1. Find Company
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
   const searchLower = companyQuery.toLowerCase().trim();
-  const matchedCompanyDoc = companiesSnap.docs.find(d => {
-    const name = (d.data().name || '').toLowerCase();
-    return name.includes(searchLower) || searchLower.includes(name);
+
+  // Find exact or partial match
+  let matchedCompanyDoc = companiesSnap.docs.find(d => {
+    const name = (d.data().name || '').toLowerCase().trim();
+    return name === searchLower;
   });
+
+  if (!matchedCompanyDoc) {
+    matchedCompanyDoc = companiesSnap.docs.find(d => {
+      const name = (d.data().name || '').toLowerCase().trim();
+      return name.includes(searchLower) || searchLower.includes(name);
+    });
+  }
 
   if (!matchedCompanyDoc) {
     return `❌ *Company not found*\nCould not find any company matching "${companyQuery}".\n_Try typing the full or partial company name._`;
@@ -102,7 +111,14 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   const invoicesSnap = await getDocs(invoicesQuery);
 
   if (invoicesSnap.empty) {
-    return `🏢 *${company.name}*\n━━━━━━━━━━━━━━━━━━\n📌 *Status:* No invoices recorded yet for this client.\n📞 *Contact:* ${company.contactNumber || 'N/A'}\n📍 *Address:* ${company.address || 'N/A'}`;
+    let msg = `🏢 *${company.name.toUpperCase()}*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `📌 *Status:* No invoices recorded yet.\n`;
+    if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
+    if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
+    if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
+    if (company.address) msg += `📍 *Address:* ${company.address}\n`;
+    return msg;
   }
 
   // 3. Fetch Payments for this company
@@ -229,6 +245,39 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
 }
 
 /**
+ * Search a specific forklift by serial number or name.
+ */
+export async function getForkliftDetail(serialQuery: string): Promise<string> {
+  const { firestore } = initializeFirebase();
+  const snap = await getDocs(collection(firestore, 'forklifts'));
+  const searchLower = serialQuery.toLowerCase().trim();
+
+  const matched = snap.docs.find(d => {
+    const sn = (d.data().serialNumber || '').toLowerCase().trim();
+    return sn.includes(searchLower) || searchLower.includes(sn);
+  });
+
+  if (!matched) {
+    return `🚜 *Forklift not found*\nCould not find forklift matching "${serialQuery}".`;
+  }
+
+  const f = matched.data();
+  let msg = `🚜 *FORKLIFT: ${f.serialNumber}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `🏭 *Make / Model:* ${f.make || ''} ${f.model || ''}\n`;
+  msg += `⚡ *Capacity:* ${f.capacity || 'N/A'}\n`;
+  msg += `🏢 *Firm:* ${f.firm || 'Vithal'}\n`;
+  msg += `📍 *Current Location:* *${f.locationType}*\n`;
+  if (f.locationType === 'On-Site') {
+    msg += `🏢 *Client Site:* ${f.siteCompany || 'N/A'}\n`;
+    msg += `📍 *Site Area:* ${f.siteArea || 'N/A'}\n`;
+    if (f.siteContactPerson) msg += `👤 *Site Contact:* ${f.siteContactPerson} (${f.siteContactNumber || ''})\n`;
+  }
+  if (f.remarks) msg += `📝 *Remarks:* ${f.remarks}\n`;
+  return msg;
+}
+
+/**
  * Get today's attendance summary.
  */
 export async function getTodayAttendanceSummary(): Promise<string> {
@@ -313,97 +362,94 @@ export async function getMonthlyBillingSummary(): Promise<string> {
 }
 
 /**
- * Process any free-form natural language query using Gemini 2.0 Flash.
+ * List all registered companies.
  */
-export async function processAdminNaturalLanguageQuery(userPrompt: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY || 'AIzaSyDER55dvCYcL-Ipopaw_VLVtHQcv90KI40';
-  if (!apiKey) {
-    return '⚠️ Gemini API Key is missing in server environment.';
+export async function listAllCompanies(): Promise<string> {
+  const { firestore } = initializeFirebase();
+  const snap = await getDocs(collection(firestore, 'companies'));
+
+  if (snap.empty) {
+    return '🏢 *No companies registered in database.*';
   }
 
-  // 1. Identify Intent via Gemini
-  const systemInstruction = `You are the Brain of VE Dashboard Telegram Bot for a Forklift Workshop & Rental company (Vithal Enterprises & R.V Enterprises).
-Analyze the user's message and determine the best action.
-Return a STRICT JSON response in this format:
-{
-  "action": "company_pending" | "fleet_summary" | "workshop_fleet" | "onsite_fleet" | "attendance_today" | "billing_summary" | "general_qa",
-  "companyName": string | null,
-  "explanation": string
+  let msg = `🏢 *REGISTERED COMPANIES (${snap.size}):*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+  snap.docs.forEach((d, i) => {
+    const c = d.data();
+    msg += `${i + 1}. *${c.name}* ${c.contactNumber ? `(📞 ${c.contactNumber})` : ''}\n`;
+  });
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n_Type company name to get its pending balance & bills._`;
+  return msg;
 }
 
-Actions:
-- "company_pending": when user asks for pending, balance, payments, or details of a specific company (extract companyName).
-- "fleet_summary": when user asks about overall fleet, total forklifts, utilization.
-- "workshop_fleet": when user asks about forklifts in workshop, idle, available units.
-- "onsite_fleet": when user asks about forklifts on-site or deployed at client sites.
-- "attendance_today": when user asks about today's attendance, absentees, present staff.
-- "billing_summary": when user asks about monthly billing, revenue, total invoice amounts.
-- "general_qa": for greetings, help, or other workshop management questions.`;
+/**
+ * Comprehensive Smart Natural Language Processor.
+ * Dynamically queries Firestore with multi-layer matching.
+ */
+export async function processAdminNaturalLanguageQuery(userPrompt: string): Promise<string> {
+  const raw = userPrompt.trim();
+  const lower = raw.toLowerCase();
 
   try {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-    const res = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `${systemInstruction}\n\nUser Message: "${userPrompt}"` }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      }),
-    });
+    const { firestore } = initializeFirebase();
 
-    const geminiResult = await res.json();
-    const rawJson = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (rawJson) {
-      const parsed = JSON.parse(rawJson);
+    // 1. Check if user is asking for all companies list
+    if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
+      return await listAllCompanies();
+    }
 
-      switch (parsed.action) {
-        case 'company_pending':
-          if (parsed.companyName) {
-            return await getCompanyPaymentSummary(parsed.companyName);
-          }
-          break;
-        case 'fleet_summary':
-          return await getFleetStatus();
-        case 'workshop_fleet':
-          return await getFleetStatus('Workshop');
-        case 'onsite_fleet':
-          return await getFleetStatus('On-Site');
-        case 'attendance_today':
-          return await getTodayAttendanceSummary();
-        case 'billing_summary':
-          return await getMonthlyBillingSummary();
+    // 2. Dynamic Company Name Search
+    // Fetch all companies to match directly against the prompt
+    const companiesSnap = await getDocs(collection(firestore, 'companies'));
+    for (const d of companiesSnap.docs) {
+      const companyName = (d.data().name || '').toLowerCase().trim();
+      if (companyName.length > 2) {
+        // Check if full company name or primary word exists in prompt
+        const words = companyName.split(/\s+/).filter(w => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'llp', 'and', 'the'].includes(w));
+        const matched = lower.includes(companyName) || words.some(w => lower.includes(w));
+        if (matched) {
+          return await getCompanyPaymentSummary(d.data().name);
+        }
       }
     }
+
+    // 3. Forklift Specific Serial Search
+    const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
+    for (const d of forkliftsSnap.docs) {
+      const sn = (d.data().serialNumber || '').toLowerCase().trim();
+      if (sn.length > 2 && lower.includes(sn)) {
+        return await getForkliftDetail(d.data().serialNumber);
+      }
+    }
+
+    // 4. Workshop / Idle Forklifts
+    if (lower.includes('workshop') || lower.includes('idle') || lower.includes('khade') || lower.includes('khada') || lower.includes('available') || lower.includes('godown')) {
+      return await getFleetStatus('Workshop');
+    }
+
+    // 5. On-Site / Deployed Forklifts
+    if (lower.includes('site') || lower.includes('client') || lower.includes('onsite') || lower.includes('on-site') || lower.includes('deployed') || lower.includes('bahar')) {
+      return await getFleetStatus('On-Site');
+    }
+
+    // 6. Overall Fleet / Machine
+    if (lower.includes('fleet') || lower.includes('forklift') || lower.includes('gaadi') || lower.includes('gadi') || lower.includes('machine') || lower.includes('units')) {
+      return await getFleetStatus();
+    }
+
+    // 7. Attendance & Staff
+    if (lower.includes('attendance') || lower.includes('absent') || lower.includes('present') || lower.includes('haziri') || lower.includes('chhutti') || lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('staff')) {
+      return await getTodayAttendanceSummary();
+    }
+
+    // 8. Billing / Revenue / Total Sales
+    if (lower.includes('billing') || lower.includes('revenue') || lower.includes('collection') || lower.includes('kamai') || lower.includes('turnover') || lower.includes('total bill') || lower.includes('invoiced')) {
+      return await getMonthlyBillingSummary();
+    }
+
   } catch (err) {
-    console.error('Gemini NLP Error:', err);
+    console.error('Smart NLP processing error:', err);
   }
 
-  // Fallback direct heuristic matching if Gemini is slow or unavailable
-  const lower = userPrompt.toLowerCase();
-  if (lower.includes('workshop') || lower.includes('idle')) {
-    return await getFleetStatus('Workshop');
-  }
-  if (lower.includes('site') || lower.includes('client')) {
-    return await getFleetStatus('On-Site');
-  }
-  if (lower.includes('fleet') || lower.includes('forklift')) {
-    return await getFleetStatus();
-  }
-  if (lower.includes('attendance') || lower.includes('absent') || lower.includes('present')) {
-    return await getTodayAttendanceSummary();
-  }
-  if (lower.includes('billing') || lower.includes('revenue') || lower.includes('collection')) {
-    return await getMonthlyBillingSummary();
-  }
-
-  return `🤖 *VE Dashboard Bot Help*\n━━━━━━━━━━━━━━━━━━━━━\nI can answer questions about your business in normal Hindi / English:\n\n• *"Bisleri ka pending payment kitna hai?"*\n• *"Workshop me kitne forklifts khade hain?"*\n• *"Aaj kon kon absent hai?"*\n• *"Is month ka total billing kitna hua?"*\n• *"On-site forklifts ki list do"*\n━━━━━━━━━━━━━━━━━━━━━`;
+  // Helpful response if no specific entity was recognized
+  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Details & Pending:* Type company name (e.g. _"Bisleri"_, _"Reliance pending"_, or _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop forklifts"_, _"On-site forklifts"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
 }
