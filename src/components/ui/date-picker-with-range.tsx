@@ -2,7 +2,8 @@
 "use client";
 
 import { useState } from 'react';
-import { format, type DateRange } from "date-fns";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import { Calendar as CalendarIcon } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";

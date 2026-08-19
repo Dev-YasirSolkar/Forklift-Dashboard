@@ -1,7 +1,7 @@
 
 'use client';
 
-import { Packer, Document, Paragraph, TextRun, AlignmentType, BorderStyle, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, VerticalAlign, PageOrientation, PageSize } from 'docx';
+import { Packer, Document, Paragraph, TextRun, AlignmentType, BorderStyle, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, VerticalAlign, PageOrientation } from 'docx';
 import { saveAs } from 'file-saver';
 import { format, parseISO } from 'date-fns';
 import { ToWords } from 'to-words';
@@ -33,15 +33,20 @@ export const generateSalarySlip = async (salary: Salary, employee: Employee, com
     const doc = new Document({
         styles: {
             default: {
-                run: {
-                    font: "Calibri",
+                document: {
+                    run: {
+                        font: "Calibri",
+                    },
                 },
             },
         },
         sections: [{
             properties: {
                 page: {
-                    size: PageSize.A4,
+                    size: {
+                        width: 11906,
+                        height: 16838,
+                    },
                     margin: { top: 720, right: 720, bottom: 720, left: 720 },
                 },
             },
@@ -211,7 +216,7 @@ export const generateSalarySlip = async (salary: Salary, employee: Employee, com
                 }),
 
                 new Paragraph({
-                    children: [new TextRun({ text: `Amount in words: ${netSalaryWords}`, font: "Calibri", italic: true, size: 16 })],
+                    children: [new TextRun({ text: `Amount in words: ${netSalaryWords}`, font: "Calibri", italics: true, size: 16 })],
                     spacing: { before: 100 },
                 }),
 

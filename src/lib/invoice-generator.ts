@@ -1,5 +1,5 @@
 
-import { Packer, Document, Paragraph, TextRun, AlignmentType, BorderStyle, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, VerticalAlign, PageOrientation, IPageSize, PageSize, TableLayoutType } from 'docx';
+import { Packer, Document, Paragraph, TextRun, AlignmentType, BorderStyle, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, VerticalAlign, PageOrientation, TableLayoutType } from 'docx';
 import { saveAs } from 'file-saver';
 import { format, parseISO } from 'date-fns';
 import { ToWords } from 'to-words';
@@ -33,19 +33,46 @@ export type DownloadOptions = {
     includeSiteInFilename?: boolean;
 };
 
-
-const getPageSize = (size: PageSettings['size']): IPageSize => {
+const getPageSizeDimensions = (size: PageSettings['size'], orientation: 'portrait' | 'landscape') => {
+    let width = 11906; // A4 default (twips)
+    let height = 16838;
     switch (size) {
-        case 'A4':
-            return PageSize.A4;
         case 'LETTER':
-            return PageSize.LETTER;
+            width = 12240;
+            height = 15840;
+            break;
         case 'LEGAL':
-            return PageSize.LEGAL;
+            width = 12240;
+            height = 20160;
+            break;
+        case 'A4':
         default:
-            return PageSize.A4;
+            width = 11906;
+            height = 16838;
+            break;
     }
-}
+    if (orientation === 'landscape') {
+        return {
+            width: height,
+            height: width,
+            orientation: PageOrientation.LANDSCAPE,
+        };
+    }
+    return {
+        width,
+        height,
+        orientation: PageOrientation.PORTRAIT,
+    };
+};
+
+const noTableBorders = {
+    top: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    left: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    right: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    insideVertical: { style: BorderStyle.NONE, size: 0, color: "auto" },
+};
 
 // Function to convert cm to Twips (1 cm = 567 Twips)
 const convertCmToTwip = (cm: number): number => {
@@ -102,7 +129,7 @@ const createFormattedTextRuns = (text: string | number | undefined, defaultSizeI
     if (text === undefined || text === null) return [new TextRun({ text: "", font: "Calibri" })];
 
     function processText(subText: string, isBold: boolean, sizeInPoints: number): TextRun[] {
-        const regex = /(\*\*.*?\*\*|<s:\d+>.*?<\/s:\d+>)/gs;
+        const regex = /(\*\*[\s\S]*?\*\*|<s:\d+>[\s\S]*?<\/s:\d+>)/g;
         const parts = subText.split(regex).filter(part => part);
         
         return parts.flatMap(part => {
@@ -112,7 +139,7 @@ const createFormattedTextRuns = (text: string | number | undefined, defaultSizeI
             }
 
             // Handle nested font size
-            const sizeMatch = part.match(/^<s:(\d+)>(.*?)<\/s:\d+>$/s);
+            const sizeMatch = part.match(/^<s:(\d+)>([\s\S]*?)<\/s:\d+>$/);
             if (sizeMatch) {
                 const customSize = parseInt(sizeMatch[1], 10);
                 const content = sizeMatch[2];
@@ -311,8 +338,7 @@ export const generateAndDownloadInvoice = async (
         sections: [{
             properties: {
                 page: {
-                    size: getPageSize(settings.size),
-                    orientation: settings.orientation === 'landscape' ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT,
+                    size: getPageSizeDimensions(settings.size, settings.orientation),
                     margin: { 
                         top: convertCmToTwip(settings.pageMargins.top), 
                         right: convertCmToTwip(settings.pageMargins.right), 
@@ -330,7 +356,7 @@ export const generateAndDownloadInvoice = async (
 
                 new DocxTable({
                     width: { size: 100, type: WidthType.PERCENTAGE },
-                    borders: { top: BorderStyle.NONE, bottom: BorderStyle.NONE, left: BorderStyle.NONE, right: BorderStyle.NONE, insideHorizontal: BorderStyle.NONE, insideVertical: BorderStyle.NONE },
+                    borders: noTableBorders,
                     rows: [
                        new DocxTableRow({
                             children: [
@@ -351,7 +377,7 @@ export const generateAndDownloadInvoice = async (
                                     ],
                                     verticalAlign: VerticalAlign.TOP,
                                     margins: cellMargins,
-                                }),
+                                    }),
                             ],
                         }),
                     ]
@@ -361,7 +387,7 @@ export const generateAndDownloadInvoice = async (
                 
                 new DocxTable({
                     width: { size: 100, type: WidthType.PERCENTAGE },
-                    borders: { top: BorderStyle.NONE, bottom: BorderStyle.NONE, left: BorderStyle.NONE, right: BorderStyle.NONE, insideHorizontal: BorderStyle.NONE, insideVertical: BorderStyle.NONE },
+                    borders: noTableBorders,
                     rows: [
                         new DocxTableRow({
                             children: [

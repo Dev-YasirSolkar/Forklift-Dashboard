@@ -663,8 +663,8 @@ export default function BillingPage() {
           pageOrientation: invoice.documentSettings?.pageOrientation || liveDefaultPageSettings.pageOrientation,
           pageMargins: invoice.documentSettings?.pageMargins || liveDefaultPageSettings.pageMargins,
           pageFontSize: invoice.documentSettings?.pageFontSize || liveDefaultPageSettings.pageFontSize,
-          addressFontSize: invoice.addressFontSize || liveDefaultPageSettings.addressFontSize,
-          tableBodyFontSize: invoice.tableBodyFontSize || liveDefaultPageSettings.tableBodyFontSize,
+          addressFontSize: invoice.documentSettings?.addressFontSize || liveDefaultPageSettings.addressFontSize,
+          tableBodyFontSize: invoice.documentSettings?.tableBodyFontSize || liveDefaultPageSettings.tableBodyFontSize,
       });
       setFormDownloadOptions(invoice.downloadOptions || defaultDownloadOptions);
       setFormTemplate(invoice.template || liveDefaultTemplate);
@@ -680,28 +680,6 @@ export default function BillingPage() {
     }
     handleDelayedAction(() => setIsFormDialogOpen(true));
   }, [ activeTab, liveDefaultPageSettings, liveDefaultTemplate, resetForm ]);
-
-  // AI Voice Command Listener (Placed after openFormDialog definition)
-  useEffect(() => {
-    const handleVoiceFill = (event: any) => {
-        const { intent, data } = event.detail;
-        if (intent === 'invoice') {
-            openFormDialog(null);
-            if (data.companyName) {
-                const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
-                if (matched) setCompanyId(matched.id);
-            }
-            if (data.amount) {
-                setItems([{ key: `item-${Date.now()}`, particulars: 'Service Charge', rate: '', amount: data.amount }]);
-            }
-            if (data.billingMonth) {
-                setBillingMonth(data.billingMonth);
-            }
-        }
-    };
-    window.addEventListener('ai-form-fill', handleVoiceFill);
-    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
-  }, [companies, openFormDialog]);
 
   const openPreviewDialog = useCallback((invoice: Invoice) => {
     setInvoiceForPreview(invoice);
@@ -740,8 +718,8 @@ export default function BillingPage() {
         orientation: invoice.documentSettings?.pageOrientation || liveDefaultPageSettings.pageOrientation || 'portrait',
         pageMargins: invoice.documentSettings?.pageMargins || liveDefaultPageSettings.pageMargins || { top: 1.27, right: 1.27, bottom: 1.27, left: 1.27 },
         pageFontSize: invoice.documentSettings?.pageFontSize || liveDefaultPageSettings.pageFontSize,
-        addressFontSize: invoice.addressFontSize || liveDefaultPageSettings.addressFontSize,
-        tableBodyFontSize: invoice.tableBodyFontSize || liveDefaultPageSettings.tableBodyFontSize,
+        addressFontSize: invoice.documentSettings?.addressFontSize || liveDefaultPageSettings.addressFontSize,
+        tableBodyFontSize: invoice.documentSettings?.tableBodyFontSize || liveDefaultPageSettings.tableBodyFontSize,
     }
 
     try {

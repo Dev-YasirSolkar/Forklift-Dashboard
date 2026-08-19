@@ -33,8 +33,13 @@ export type EmployeeFormData = {
   telegramChatId: string;
 };
 
+export type EmployeeFormSubmitData = Omit<EmployeeFormData, 'baseSalary' | 'otHourlyRate'> & {
+  baseSalary: number;
+  otHourlyRate: number;
+};
+
 interface EmployeeFormProps {
-  onSubmit: (data: Partial<EmployeeFormData> & { baseSalary: number, otHourlyRate: number }) => void;
+  onSubmit: (data: EmployeeFormSubmitData) => void;
   initialData?: Employee;
   mode: 'add' | 'edit';
 }

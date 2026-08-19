@@ -554,7 +554,7 @@ export default function ForkliftsPage() {
                 </SelectTrigger>
                 <SelectContent>
                      {locationOptions.map(loc => (
-                      <SelectItem key={loc} value={loc} className="text-xs">
+                      <SelectItem key={loc ?? ''} value={loc ?? ''} className="text-xs">
                         {loc === 'All' ? 'All Locations' : loc}
                       </SelectItem>
                     ))}
@@ -566,7 +566,7 @@ export default function ForkliftsPage() {
                 </SelectTrigger>
                 <SelectContent>
                     {equipmentTypes.map(type => (
-                    <SelectItem key={type} value={type} className="text-xs">{type}</SelectItem>
+                    <SelectItem key={type ?? ''} value={type ?? ''} className="text-xs">{type}</SelectItem>
                     ))}
                 </SelectContent>
                 </Select>
@@ -576,7 +576,7 @@ export default function ForkliftsPage() {
                 </SelectTrigger>
                 <SelectContent>
                     {capacities.map(capacity => (
-                    <SelectItem key={capacity} value={capacity} className="text-xs">{capacity}</SelectItem>
+                    <SelectItem key={capacity ?? ''} value={capacity ?? ''} className="text-xs">{capacity}</SelectItem>
                     ))}
                 </SelectContent>
                 </Select>
@@ -624,7 +624,7 @@ export default function ForkliftsPage() {
                                 <TableCell className="p-3">
                                   <div className="flex items-center gap-1.5">
                                       {hasActiveRequest(forklift.id) && (
-                                          <Wrench className="h-3.5 w-3.5 text-orange-500" title="Active Service Request" />
+                                          <Wrench className="h-3.5 w-3.5 text-orange-500" aria-label="Active Service Request" />
                                       )}
                                       <span className="font-bold text-xs sm:text-sm">{forklift.serialNumber}</span>
                                   </div>

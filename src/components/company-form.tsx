@@ -18,6 +18,7 @@ export type CompanyFormData = {
 
 interface CompanyFormProps {
   onSubmit: (data: CompanyFormData) => void;
+  onCancel?: () => void;
   initialData?: Company;
   mode: 'add' | 'edit';
 }

@@ -209,24 +209,6 @@ export default function PaymentsPage() {
     setIsPaymentDialogOpen(true);
   }, [closeAllDialogs]);
 
-  // AI Voice Command Listener (Placed after handleOpenPaymentDialog definition)
-  useEffect(() => {
-    const handleVoiceFill = (event: any) => {
-        const { intent, data } = event.detail;
-        if (intent === 'payment') {
-            const billNoToMatch = data.billNo;
-            const matchedInvoice = processedInvoices.find(inv => inv.billNo.toString() === billNoToMatch?.toString() && inv.enterprise === activeTab);
-            if (matchedInvoice) {
-                handleOpenPaymentDialog(matchedInvoice);
-                if (data.amount) setReceivedAmount(data.amount.toString());
-                if (data.mode) setPaymentMode(data.mode.toUpperCase() as PaymentMode);
-            }
-        }
-    };
-    window.addEventListener('ai-form-fill', handleVoiceFill);
-    return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
-  }, [processedInvoices, activeTab, handleOpenPaymentDialog]);
-  
   const availableYears = useMemo(() => {
     if (!processedInvoices) return [];
     const years = new Set(processedInvoices.filter(inv => inv.enterprise === activeTab).map(inv => {

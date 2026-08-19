@@ -238,6 +238,7 @@ export default function SalaryPage() {
       ot: parseFloat(ot) || 0,
       pf: parseFloat(pf) || 0,
       esic: parseFloat(esic) || 0,
+      pt: 0,
       tds: parseFloat(tds) || 0,
       lwf: parseFloat(lwf) || 0,
       advance: parseFloat(advance) || 0,

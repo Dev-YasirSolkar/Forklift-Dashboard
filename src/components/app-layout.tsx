@@ -27,7 +27,6 @@ import { useFirebase } from '@/firebase';
 import { ThemeToggle } from './theme-toggle';
 import { LayoutDashboard, Wrench, Warehouse } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { VoiceAssistant } from './voice-assistant';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -153,7 +152,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <main className="flex-1 overflow-auto p-3 sm:p-6 print:p-0">
           {children}
         </main>
-        <VoiceAssistant />
       </SidebarInset>
     </SidebarProvider>
   );

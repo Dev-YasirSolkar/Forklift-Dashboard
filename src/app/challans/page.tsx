@@ -424,33 +424,6 @@ export default function ChallansPage() {
         setIsFormOpen(true);
     }, []);
 
-    // AI Voice Command Listener (Placed after handleCreateNew definition)
-    useEffect(() => {
-        const handleVoiceFill = (event: any) => {
-            const { intent, data } = event.detail;
-            if (intent === 'challan') {
-                handleCreateNew();
-                if (data.companyName) {
-                    const matched = companies?.find(c => c.name.toLowerCase().includes(data.companyName.toLowerCase()));
-                    if (matched) {
-                        setDeliveryToId(matched.id);
-                    } else {
-                        setDeliveryToId('manual');
-                        setManualDeliveryToName(data.companyName);
-                    }
-                }
-                if (data.items) {
-                    setItems(data.items.map((item: string) => ({ particulars: item, amount: 0 })));
-                }
-                if (data.challanNo) {
-                    setChallanNo(data.challanNo);
-                }
-            }
-        };
-        window.addEventListener('ai-form-fill', handleVoiceFill);
-        return () => window.removeEventListener('ai-form-fill', handleVoiceFill);
-    }, [companies, handleCreateNew]);
-
     const resetFilters = () => {
         setHistorySearch('');
         setFirmFilter('All');

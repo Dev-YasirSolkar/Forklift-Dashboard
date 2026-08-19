@@ -39,7 +39,7 @@ import { useCollection, useFirebase, useMemoFirebase } from "@/firebase";
 import { collection, doc, query, orderBy } from "firebase/firestore";
 import { useState, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { EmployeeForm, EmployeeFormData } from "@/components/employee-form";
+import { EmployeeForm, type EmployeeFormSubmitData } from "@/components/employee-form";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/app-layout";
 import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlocking } from "@/firebase/non-blocking-updates";
@@ -84,7 +84,7 @@ export default function EmployeesPage() {
     setEmployeeToDelete(null);
   };
   
-  const handleFormSubmit = (formData: EmployeeFormData) => {
+  const handleFormSubmit = (formData: EmployeeFormSubmitData) => {
     if (!firestore) return;
     
     if (selectedEmployee) { // Edit mode

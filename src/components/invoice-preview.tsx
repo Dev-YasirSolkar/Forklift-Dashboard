@@ -39,7 +39,7 @@ export function InvoicePreview({ invoice, company, myCompanyDetails, downloadOpt
   const opts = downloadOptions;
   const selectedBank = invoice.selectedBankAccount;
 
-  const tableBodyFontSize = invoice.tableBodyFontSize || 11;
+  const tableBodyFontSize = invoice.documentSettings?.tableBodyFontSize || 11;
   const getColumnStyle = (columnId: 'sr_no' | keyof InvoiceItem) => {
     const column = invoice.template?.columns.find(c => c.id === columnId);
     return {
