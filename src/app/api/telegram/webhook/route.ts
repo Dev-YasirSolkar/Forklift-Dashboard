@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { initializeFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, orderBy, doc, getDoc } from 'firebase/firestore';
 import { generateSalaryPdfData } from '@/lib/salary-pdf-generator';
 import {
@@ -13,6 +12,10 @@ import {
   getAuthenticatedFirestore,
   renderFirmSelectionMenu,
   getUserActiveFirm,
+  setUserActiveFirm,
+  renderFirmRadioButtons,
+  EnterpriseType,
+  AssistantResponse,
 } from '@/lib/telegram-assistant';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +23,7 @@ export const maxDuration = 60;
 
 /**
  * @fileOverview Telegram Webhook Handler
- * Supports Admin business queries (Natural Language / Free-form) and Employee Salary Slips.
+ * Supports Admin business queries (Natural Language, Monospace Tables, Inline Radio Buttons) and Employee Salary Slips.
  */
 
 const monthMap: Record<string, string> = {
@@ -48,6 +51,81 @@ export async function POST(req: Request) {
   try {
     const data = await req.json();
     console.log('[Telegram Webhook Payload]:', JSON.stringify(data));
+
+    // ─── A. HANDLE INLINE BUTTON CALLBACK QUERIES ─────────────────────────
+    if (data.callback_query) {
+      const cb = data.callback_query;
+      const callbackId = cb.id;
+      const chatId = cb.message?.chat?.id?.toString() || cb.from?.id?.toString();
+      const cbData = String(cb.data || '');
+      const messageId = cb.message?.message_id;
+
+      if (chatId) {
+        // 1. Firm Radio Button Selection
+        if (cbData.startsWith('firm:')) {
+          const selectedFirm = cbData.split(':')[1] as EnterpriseType;
+          const res = await setUserActiveFirm(chatId, selectedFirm);
+          
+          await answerTelegramCallback(token, callbackId, `Firm set to ${selectedFirm}!`);
+          
+          if (messageId) {
+            await editTelegramMessage(token, chatId, messageId, res.text, res.buttons);
+          } else {
+            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          }
+          return NextResponse.json({ ok: true });
+        }
+
+        // 2. Company Disambiguation Selection
+        if (cbData.startsWith('comp_select:') || cbData.startsWith('comp_pend:') || cbData.startsWith('comp_bills:') || cbData.startsWith('comp_fork:')) {
+          const activeFirm = await getUserActiveFirm(chatId);
+          let intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
+          let compName = '';
+
+          if (cbData.startsWith('comp_select:')) {
+            compName = cbData.replace('comp_select:', '');
+            intent = 'all';
+          } else if (cbData.startsWith('comp_pend:')) {
+            compName = cbData.replace('comp_pend:', '');
+            intent = 'pending';
+          } else if (cbData.startsWith('comp_bills:')) {
+            compName = cbData.replace('comp_bills:', '');
+            intent = 'bills';
+          } else if (cbData.startsWith('comp_fork:')) {
+            compName = cbData.replace('comp_fork:', '');
+            intent = 'forklifts';
+          }
+
+          const res = await getCompanyDetailByIntent(compName, intent, activeFirm);
+          await answerTelegramCallback(token, callbackId, `Loading ${compName}...`);
+          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          return NextResponse.json({ ok: true });
+        }
+
+        // 3. Quick Fleet Shortcuts
+        if (cbData === 'quick:workshop' || cbData === 'quick:onsite' || cbData === 'quick:fleet') {
+          const activeFirm = await getUserActiveFirm(chatId);
+          const filter = cbData === 'quick:workshop' ? 'Workshop' : cbData === 'quick:onsite' ? 'On-Site' : undefined;
+          const res = await getFleetStatus(filter, activeFirm);
+          await answerTelegramCallback(token, callbackId);
+          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          return NextResponse.json({ ok: true });
+        }
+
+        // 4. Firm Selection Menu
+        if (cbData === 'menu:firm') {
+          const res = await renderFirmSelectionMenu(chatId);
+          await answerTelegramCallback(token, callbackId);
+          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          return NextResponse.json({ ok: true });
+        }
+      }
+
+      await answerTelegramCallback(token, callbackId);
+      return NextResponse.json({ ok: true });
+    }
+
+    // ─── B. HANDLE STANDARD CHAT MESSAGES ──────────────────────────────────
     const message = data.message || data.edited_message;
 
     if (message && message.text && message.chat) {
@@ -69,18 +147,19 @@ export async function POST(req: Request) {
           await sendTelegramMessage(
             token,
             chatId,
-            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *ADMIN ACCESS ACTIVATED!* 👑\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 🙏 Aapka Admin mode permanently active ho gaya hai.`
+            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *ADMIN ACCESS ACTIVATED!* 👑\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 🙏 Aapka Admin session **permanently active** ho gaya hai.`
           );
-          // Immediately send Firm Selection Menu
-          const firmMenu = renderFirmSelectionMenu(chatId);
-          await sendTelegramMessage(token, chatId, firmMenu);
+          
+          // Send Interactive Firm Radio Selection
+          const firmMenu = await renderFirmSelectionMenu(chatId);
+          await sendTelegramMessage(token, chatId, firmMenu.text, firmMenu.buttons);
         } else {
           await sendTelegramMessage(token, chatId, `🔒 To unlock Admin access, simply type:\n👉 \`/2028\``);
         }
         return NextResponse.json({ ok: true });
       }
 
-      // Check admin status safely (Permanent Persistence)
+      // Check admin status safely (Permanent Lifetime Persistence)
       let isAdmin = false;
       try {
         isAdmin = await isTelegramAdmin(chatId);
@@ -88,14 +167,15 @@ export async function POST(req: Request) {
         console.error('Error checking admin status:', err);
       }
 
-      // ─── 2. START / HELP COMMAND (CUSTOM WELCOME MESSAGE) ─────────────────
+      // ─── 2. START / HELP COMMAND ─────────────────────────────────────────
       if (lowerText === '/start' || lowerText === 'id' || lowerText === '/id' || lowerText === '/help') {
         if (isAdmin) {
           const activeFirm = await getUserActiveFirm(chatId);
           await sendTelegramMessage(
             token,
             chatId,
-            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *NAMASTE ${firstName.toUpperCase()}! (ADMIN)* 👑\n🏢 Active Firm: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nAapka Admin session active hai. Aap ye queries puch sakte hain:\n\n📊 *Quick Shortcuts:*\n• 🏢 _"Bisleri pending"_\n• 🚜 _"Workshop"_\n• 📅 _"Today attendance"_\n• 💰 _"Revenue"_\n• 🔄 \`/firm\` ➔ Change Active Firm (Vithal / RV / Both)\n━━━━━━━━━━━━━━━━━━━━━━`
+            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *NAMASTE ${firstName.toUpperCase()}! (ADMIN)* 👑\n🏢 Active Firm: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nAapka Admin session active hai. Aap ye queries puch sakte hain:\n\n📊 *Quick Shortcuts:*\n• 🏢 _"Bisleri pending"_\n• 🚜 _"Workshop"_\n• 📅 _"Today attendance"_\n• 💰 _"Revenue"_\n\n👇 *Select Active Firm below:*`,
+            renderFirmRadioButtons(activeFirm)
           );
         } else {
           const welcomeMsg = `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n🚜 *WELCOME TO VE DASHBOARD BOT* 🚜\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 👋 Aapka swagat hai hamare automated service portal par.\n\n🔑 *Aapka Unique Chat ID:*\n\`${chatId}\`\n\n━━━━━━━━━━━━━━━━━━━━━━\n👑 *ADMIN / OWNER ACCESS:*\nAgar aap Owner/Admin hain, toh dashboard access unlock karne ke liye ye code bhejein:\n👉 \`/2028\`\n\n━━━━━━━━━━━━━━━━━━━━━━\n👷 *TECHNICIAN / STAFF COMMANDS:*\n• 📄 \`/slip\` ➔ Latest salary summary\n• 📑 \`/slips\` ➔ All available salary slips\n• 📥 \`/slip Jan\` ➔ Specific month ki PDF slip\n\n━━━━━━━━━━━━━━━━━━━━━━\n_Type \`/help\` anytime for assistance._`;
@@ -104,36 +184,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      // ─── 3. ADMIN QUICK SHORTCUTS ────────────────────────────────────────
-      if (isAdmin) {
-        if (lowerText === '/fleet' || lowerText === 'fleet') {
-          const res = await getFleetStatus();
-          await sendTelegramMessage(token, chatId, res);
-          return NextResponse.json({ ok: true });
-        }
-        if (lowerText === '/attendance' || lowerText === 'attendance') {
-          const res = await getTodayAttendanceSummary();
-          await sendTelegramMessage(token, chatId, res);
-          return NextResponse.json({ ok: true });
-        }
-        if (lowerText === '/revenue' || lowerText === 'revenue') {
-          const res = await getMonthlyBillingSummary();
-          await sendTelegramMessage(token, chatId, res);
-          return NextResponse.json({ ok: true });
-        }
-        if (lowerText.startsWith('/pending') || lowerText.startsWith('/company')) {
-          const companyQuery = rawText.replace(/^\/(pending|company)\s*/i, '').trim();
-          if (companyQuery) {
-            const res = await getCompanyPaymentSummary(companyQuery);
-            await sendTelegramMessage(token, chatId, res);
-          } else {
-            await sendTelegramMessage(token, chatId, `⚠️ Please specify company name, e.g. \`/pending Bisleri\``);
-          }
-          return NextResponse.json({ ok: true });
-        }
-      }
-
-      // ─── 4. TECHNICIAN SALARY SLIPS COMMANDS ─────────────────────────────
+      // ─── 3. TECHNICIAN SALARY SLIPS COMMANDS ─────────────────────────────
       const isSalaryRequest = lowerText.startsWith('/slip') || lowerText.startsWith('/slips') || (lowerText.includes('salary') && !lowerText.includes('total'));
       if (isSalaryRequest) {
         try {
@@ -263,14 +314,14 @@ export async function POST(req: Request) {
         }
       }
 
-      // ─── 5. ADMIN NATURAL LANGUAGE QUERY (AI POWERED) ────────────────────
+      // ─── 4. ADMIN NATURAL LANGUAGE QUERY ─────────────────────────────────
       if (isAdmin) {
-        const answer = await processAdminNaturalLanguageQuery(rawText, chatId);
-        await sendTelegramMessage(token, chatId, answer);
+        const response = await processAdminNaturalLanguageQuery(rawText, chatId);
+        await sendTelegramMessage(token, chatId, response.text, response.buttons);
         return NextResponse.json({ ok: true });
       }
 
-      // ─── 6. UNRECOGNIZED USER ────────────────────────────────────────────
+      // ─── 5. UNRECOGNIZED USER ────────────────────────────────────────────
       await sendTelegramMessage(
         token,
         chatId,
@@ -285,32 +336,86 @@ export async function POST(req: Request) {
   }
 }
 
-async function sendTelegramMessage(token: string, chatId: string, text: string) {
+async function sendTelegramMessage(
+  token: string, 
+  chatId: string, 
+  text: string, 
+  buttons?: Array<Array<{ text: string; callback_data: string }>>
+) {
   try {
+    const payload: any = {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'Markdown',
+    };
+
+    if (buttons && buttons.length > 0) {
+      payload.reply_markup = { inline_keyboard: buttons };
+    }
+
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'Markdown',
-      }),
+      body: JSON.stringify(payload),
     });
     const result = await res.json();
     
-    // If Markdown parsing fails, retry in plain text so message is NEVER lost
+    // If Markdown parsing fails, retry in plain text
     if (!result.ok) {
+      payload.text = text.replace(/[*_`]/g, '');
+      delete payload.parse_mode;
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text.replace(/[*_`]/g, ''),
-        }),
+        body: JSON.stringify(payload),
       });
     }
   } catch (err) {
     console.error('Failed to send Telegram text message:', err);
+  }
+}
+
+async function editTelegramMessage(
+  token: string, 
+  chatId: string, 
+  messageId: number, 
+  text: string, 
+  buttons?: Array<Array<{ text: string; callback_data: string }>>
+) {
+  try {
+    const payload: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: 'Markdown',
+    };
+
+    if (buttons && buttons.length > 0) {
+      payload.reply_markup = { inline_keyboard: buttons };
+    }
+
+    await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error('Failed to edit Telegram message:', err);
+  }
+}
+
+async function answerTelegramCallback(token: string, callbackId: string, text?: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: callbackId,
+        text: text || '',
+      }),
+    });
+  } catch (err) {
+    console.error('Failed to answer Telegram callback query:', err);
   }
 }
 

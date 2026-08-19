@@ -1,7 +1,8 @@
 /**
  * @fileOverview Smart Telegram Assistant Module
  * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output,
- * permanent admin session persistence, strict firm separation (Vithal vs RV vs Both), intent routing, and multi-company disambiguation.
+ * permanent admin session persistence, interactive radio button firm selection (Vithal vs RV vs Both),
+ * intent routing, and multi-company disambiguation buttons.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -10,6 +11,11 @@ import { getFirestore, collection, query, where, getDocs, getDoc, doc, setDoc } 
 import { firebaseConfig } from '@/firebase/config';
 
 export type EnterpriseType = 'Vithal' | 'RV' | 'Both';
+
+export interface AssistantResponse {
+  text: string;
+  buttons?: Array<Array<{ text: string; callback_data: string }>>;
+}
 
 interface CompanySummary {
   id: string;
@@ -125,7 +131,7 @@ export async function getUserActiveFirm(chatId: string): Promise<EnterpriseType>
 /**
  * Set the active firm preference for the user permanently.
  */
-export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): Promise<string> {
+export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): Promise<AssistantResponse> {
   userActiveFirmMap.set(chatId, firm);
   awaitingFirmSelection.delete(chatId);
 
@@ -146,27 +152,60 @@ export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): P
       ? '🏢 R.V ENTERPRISES' 
       : '🌐 BOTH FIRMS (Vithal + RV)';
 
-  let msg = `✅ *Active Firm Set To:* ${label}\n`;
+  let msg = `✅ *Active Firm Updated:*\n${label}\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `Ab saare bills, fleet aur revenue queries **${label}** ke hisaab se dikhayenge.\n\n`;
-  msg += `_Firm change karne ke liye kabhi bhi \`/firm\` type karein._`;
-  return msg;
+  msg += `Ab saare bills, fleet aur revenue reports **${label}** ke hisaab se aayenge.\n\n`;
+  msg += `_Tap any button below to change firm anytime:_`;
+
+  return {
+    text: msg,
+    buttons: renderFirmRadioButtons(firm),
+  };
 }
 
 /**
- * Renders the Firm Selection Menu.
+ * Renders the interactive radio button keyboard for firm selection.
  */
-export function renderFirmSelectionMenu(chatId?: string): string {
-  if (chatId) awaitingFirmSelection.add(chatId);
+export function renderFirmRadioButtons(currentFirm: EnterpriseType): Array<Array<{ text: string; callback_data: string }>> {
+  return [
+    [
+      {
+        text: currentFirm === 'Vithal' ? '🔘 Vithal Enterprises' : '⚪ Vithal Enterprises',
+        callback_data: 'firm:Vithal',
+      },
+      {
+        text: currentFirm === 'RV' ? '🔘 R.V Enterprises' : '⚪ R.V Enterprises',
+        callback_data: 'firm:RV',
+      },
+    ],
+    [
+      {
+        text: currentFirm === 'Both' ? '🔘 Both (Vithal + RV Combined)' : '⚪ Both (Vithal + RV Combined)',
+        callback_data: 'firm:Both',
+      },
+    ],
+  ];
+}
+
+/**
+ * Renders the Firm Selection Menu with interactive Radio Buttons.
+ */
+export async function renderFirmSelectionMenu(chatId: string): Promise<AssistantResponse> {
+  awaitingFirmSelection.add(chatId);
+  const currentFirm = await getUserActiveFirm(chatId);
 
   let msg = `🏢 *SELECT ACTIVE FIRM / ENTERPRISE*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `Aap kis firm ka data dekhna chahte hain?\n\n`;
-  msg += `1️⃣ *Vithal Enterprises* (Sirf Vithal ke bills & gadi)\n`;
-  msg += `2️⃣ *R.V Enterprises* (Sirf RV ke bills & gadi)\n`;
-  msg += `3️⃣ *Both Firms* (Vithal + RV Alag-Alag Table)\n\n`;
-  msg += `👉 Reply karein: \`1\`, \`2\`, ya \`3\` (ya type karein \`/vithal\`, \`/rv\`, \`/both\`)`;
-  return msg;
+  msg += `Kripya apni active firm select karein:\n\n`;
+  msg += `• *Vithal Enterprises:* Sirf Vithal ke bills & fleet\n`;
+  msg += `• *R.V Enterprises:* Sirf RV ke bills & fleet\n`;
+  msg += `• *Both Firms:* Vithal & RV ke alag-alag distinct tables\n\n`;
+  msg += `👇 *Tap a button below to select:*`;
+
+  return {
+    text: msg,
+    buttons: renderFirmRadioButtons(currentFirm),
+  };
 }
 
 /**
@@ -205,7 +244,7 @@ export async function getCompanyDetailByIntent(
   companyName: string, 
   intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all',
   activeFirm: EnterpriseType = 'Both'
-): Promise<string> {
+): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
 
@@ -215,7 +254,7 @@ export async function getCompanyDetailByIntent(
   });
 
   if (!matchedCompanyDoc) {
-    return `❌ *Company "${companyName}" Not Found*\n\nType *"all companies"* to see all registered clients.`;
+    return { text: `❌ *Company "${companyName}" Not Found*\n\nType *"all companies"* to see all registered clients.` };
   }
 
   const company = matchedCompanyDoc.data() as CompanySummary;
@@ -253,7 +292,19 @@ export async function getCompanyDetailByIntent(
       msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
-    return msg;
+
+    return {
+      text: msg,
+      buttons: [
+        [
+          { text: '💰 View Pending Bills', callback_data: `comp_pend:${company.name}` },
+          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+        ],
+        [
+          { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
   }
 
   // 2. Fetch Invoices & Payments
@@ -266,11 +317,11 @@ export async function getCompanyDetailByIntent(
   if (invoicesSnap.empty) {
     let msg = `🏢 *${company.name.toUpperCase()}*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `📌 *Status:* No invoices recorded yet.\n`;
+    msg += `📌 *Status:* No invoices recorded yet in dashboard.\n`;
     if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
     if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
     if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
-    return msg;
+    return { text: msg };
   }
 
   const invoiceMap: Record<string, { billNo: number | string; date: string; amount: number; received: number; enterprise: string }> = {};
@@ -279,7 +330,6 @@ export async function getCompanyDetailByIntent(
     const inv = d.data();
     const enterprise = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
     
-    // Strict firm filtering if not 'Both'
     if (activeFirm !== 'Both' && enterprise !== activeFirm) {
       return;
     }
@@ -307,12 +357,14 @@ export async function getCompanyDetailByIntent(
   const filteredInvoices = Object.values(invoiceMap);
 
   if (filteredInvoices.length === 0) {
-    return `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n📌 No invoices found under *${activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'}* for this client.\n_Switch firm using \`/both\` to see all records._`;
+    return {
+      text: `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n📌 No invoices found under *${activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'}* for this client.`,
+      buttons: [[{ text: '🌐 View Both Firms', callback_data: 'firm:Both' }]],
+    };
   }
 
   const unpaidInvoices = filteredInvoices.filter(inv => (inv.amount - inv.received) > 1);
 
-  // Breakdown by firm (Vithal vs RV)
   const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
   const rvInvoices = filteredInvoices.filter(i => i.enterprise === 'RV');
 
@@ -326,10 +378,10 @@ export async function getCompanyDetailByIntent(
 
   const firmHeader = activeFirm === 'Both' ? 'VITHAL & R.V ENTERPRISES' : activeFirm === 'RV' ? 'R.V ENTERPRISES' : 'VITHAL ENTERPRISES';
 
-  // 3. User specifically asked for ALL BILLS / INVOICES
+  // 3. User specifically asked for ALL BILLS
   if (intent === 'bills') {
     let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()}*\n`;
-    text += `🏢 Firm Scope: *${firmHeader}* (${filteredInvoices.length} Bills)\n`;
+    text += `🏢 Scope: *${firmHeader}* (${filteredInvoices.length} Bills)\n`;
     text += `━━━━━━━━━━━━━━━━━━━━━\n`;
     text += `\`\`\`text\n`;
     text += `┌─────────┬────────┬──────────────┬─────────────┐\n`;
@@ -342,7 +394,16 @@ export async function getCompanyDetailByIntent(
     });
     text += `└─────────┴────────┴──────────────┴─────────────┘\n`;
     text += `\`\`\`\n`;
-    return text;
+
+    return {
+      text,
+      buttons: [
+        [
+          { text: '⚠️ View Pending Only', callback_data: `comp_pend:${company.name}` },
+          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+        ],
+      ],
+    };
   }
 
   // 4. Default / Pending View: Clean Non-Mixed Tables
@@ -350,7 +411,6 @@ export async function getCompanyDetailByIntent(
   text += `🔖 Scope: *${firmHeader}*\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
 
-  // Overview Table (Separate by firm if Both, or Single firm)
   if (activeFirm === 'Both') {
     text += `\`\`\`text\n`;
     text += `┌──────────────────────┬──────────────┬──────────────┐\n`;
@@ -400,18 +460,29 @@ export async function getCompanyDetailByIntent(
     text += `📞 *Contact:* ${company.kindAttn || ''} ${company.contactNumber ? `(\`${company.contactNumber}\`)` : ''}\n`;
   }
 
-  return text;
+  return {
+    text,
+    buttons: [
+      [
+        { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+        { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+      ],
+      [
+        { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+      ],
+    ],
+  };
 }
 
 /**
  * Get fleet status in a clean table format filtered by active firm.
  */
-export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', activeFirm: EnterpriseType = 'Both'): Promise<string> {
+export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', activeFirm: EnterpriseType = 'Both'): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'forklifts'));
 
   if (snap.empty) {
-    return '🚜 *No forklifts found in the database.*';
+    return { text: '🚜 *No forklifts found in the database.*' };
   }
 
   let all = snap.docs.map(d => d.data());
@@ -442,7 +513,16 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
       msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
-    return msg;
+
+    return {
+      text: msg,
+      buttons: [
+        [
+          { text: '📍 On-Site Units', callback_data: 'quick:onsite' },
+          { text: '🚜 Full Fleet', callback_data: 'quick:fleet' },
+        ],
+      ],
+    };
   }
 
   if (locationFilter === 'On-Site') {
@@ -463,7 +543,16 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
       msg += `└──────────┴────────┴──────────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
-    return msg;
+
+    return {
+      text: msg,
+      buttons: [
+        [
+          { text: '🏭 Workshop Units', callback_data: 'quick:workshop' },
+          { text: '🚜 Full Fleet', callback_data: 'quick:fleet' },
+        ],
+      ],
+    };
   }
 
   const utilRate = all.length > 0 ? ((onSite.length / all.length) * 100).toFixed(0) : '0';
@@ -482,14 +571,25 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
   msg += `│ FLEET UTILIZATION    │ ${pad(utilRate + '%', 12, 'right')} │\n`;
   msg += `└──────────────────────┴──────────────┘\n`;
   msg += `\`\`\`\n`;
-  msg += `_Type "workshop" or "onsite" for detailed list._`;
-  return msg;
+
+  return {
+    text: msg,
+    buttons: [
+      [
+        { text: '🏭 Workshop Units', callback_data: 'quick:workshop' },
+        { text: '📍 On-Site Units', callback_data: 'quick:onsite' },
+      ],
+      [
+        { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+      ],
+    ],
+  };
 }
 
 /**
  * Search a specific forklift by serial number or name.
  */
-export async function getForkliftDetail(serialQuery: string): Promise<string> {
+export async function getForkliftDetail(serialQuery: string): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'forklifts'));
   const searchLower = serialQuery.toLowerCase().trim();
@@ -500,7 +600,7 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
   });
 
   if (!matched) {
-    return `🚜 *Forklift not found*\nCould not find forklift matching "${serialQuery}".`;
+    return { text: `🚜 *Forklift not found*\nCould not find forklift matching "${serialQuery}".` };
   }
 
   const f = matched.data();
@@ -523,13 +623,14 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
   msg += `\`\`\`\n`;
   if (f.siteContactPerson) msg += `👤 *Site Contact:* ${f.siteContactPerson} (${f.siteContactNumber || 'N/A'})\n`;
   if (f.remarks) msg += `📝 *Remarks:* ${f.remarks}\n`;
-  return msg;
+
+  return { text: msg };
 }
 
 /**
  * Get today's attendance summary as a clean table.
  */
-export async function getTodayAttendanceSummary(): Promise<string> {
+export async function getTodayAttendanceSummary(): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const today = new Date().toISOString().split('T')[0];
 
@@ -575,13 +676,13 @@ export async function getTodayAttendanceSummary(): Promise<string> {
     msg += `✅ *Present Staff:*\n• ${present.join('\n• ')}\n`;
   }
 
-  return msg;
+  return { text: msg };
 }
 
 /**
  * Get current month billing summary separated cleanly by firm.
  */
-export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Both'): Promise<string> {
+export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Both'): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
@@ -638,18 +739,30 @@ export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Bot
   }
 
   msg += `\`\`\`\n`;
-  return msg;
+
+  return {
+    text: msg,
+    buttons: [
+      [
+        { text: '🔄 Switch to Vithal', callback_data: 'firm:Vithal' },
+        { text: '🔄 Switch to RV', callback_data: 'firm:RV' },
+      ],
+      [
+        { text: '🌐 Both Firms Combined', callback_data: 'firm:Both' },
+      ],
+    ],
+  };
 }
 
 /**
  * List all registered companies formatted as a table.
  */
-export async function listAllCompanies(): Promise<string> {
+export async function listAllCompanies(): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'companies'));
 
   if (snap.empty) {
-    return '🏢 *No companies registered in database.*';
+    return { text: '🏢 *No companies registered in database.*' };
   }
 
   let msg = `🏢 *REGISTERED CLIENTS (${snap.size})*\n`;
@@ -658,42 +771,51 @@ export async function listAllCompanies(): Promise<string> {
   msg += `┌────┬──────────────────────────────────┐\n`;
   msg += `│ #  │ Company Name                     │\n`;
   msg += `├────┼──────────────────────────────────┤\n`;
-  snap.docs.forEach((d, i) => {
+  snap.docs.slice(0, 30).forEach((d, i) => {
     const c = d.data();
     msg += `│ ${pad(i + 1, 2)} │ ${pad(c.name || 'Company', 32)} │\n`;
   });
   msg += `└────┴──────────────────────────────────┘\n`;
   msg += `\`\`\`\n`;
   msg += `_Type any company name (e.g. Bisleri) to view pending balance._`;
-  return msg;
+
+  return { text: msg };
 }
 
 /**
- * Disambiguation Helper: Renders interactive choice table when multiple companies match.
+ * Disambiguation Helper: Renders interactive choice buttons when multiple companies match.
  */
-function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[], chatId: string): string {
+function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[], chatId: string): AssistantResponse {
   chatRecentChoices.set(chatId, matchedCompanies);
 
   let msg = `🔍 *Multiple companies found for "${keyword}":*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-  msg += `┌────┬──────────────────────────────────────────┐\n`;
-  msg += `│ #  │ Company Name                             │\n`;
-  msg += `├────┼──────────────────────────────────────────┤\n`;
-  matchedCompanies.forEach((name, i) => {
-    msg += `│ ${pad(i + 1, 2)} │ ${pad(name, 40)} │\n`;
+  msg += `Kripya neeche di gayi company me se select karein:\n\n`;
+
+  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+  matchedCompanies.slice(0, 6).forEach((name, i) => {
+    msg += `${i + 1}. *${name}*\n`;
+    buttons.push([
+      {
+        text: `🏢 ${name.length > 30 ? name.slice(0, 27) + '...' : name}`,
+        callback_data: `comp_select:${name}`,
+      },
+    ]);
   });
-  msg += `└────┴──────────────────────────────────────────┘\n`;
-  msg += `\`\`\`\n`;
-  msg += `👉 *Please reply with the number (e.g. \`1\` or \`2\`) or the exact company name.*`;
-  return msg;
+
+  msg += `\n👉 *Tap a button above or reply with the number (\`1\`, \`2\`).*`;
+
+  return {
+    text: msg,
+    buttons,
+  };
 }
 
 /**
  * Comprehensive Smart Natural Language Processor.
  * Dynamically queries Firestore with strict intent prioritization, firm isolation, and whole-word matching.
  */
-export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<string> {
+export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
   const lower = raw.toLowerCase();
 
@@ -706,7 +828,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       lower === '/firm' || lower === 'firm' || lower === '/switch' || 
       lower === 'switch' || lower === 'change firm' || lower === 'select firm'
     ) {
-      return renderFirmSelectionMenu(chatId);
+      return await renderFirmSelectionMenu(chatId);
     }
 
     if (lower === '/vithal' || lower === 'vithal' || (awaitingFirmSelection.has(chatId) && (raw === '1' || lower.includes('vithal')))) {
@@ -862,10 +984,13 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
 
   } catch (err: any) {
     console.error('Smart NLP processing error:', err);
-    return `⚠️ *Error accessing data:* ${err.message || 'Database error'}`;
+    return { text: `⚠️ *Error accessing data:* ${err.message || 'Database error'}` };
   }
 
   // Helpful response
   const activeFirm = await getUserActiveFirm(chatId);
-  return `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\nAap ye puch sakte hain:\n\n🏢 *Company Bills / Pending:* e.g. _"JSW pending"_, _"Bisleri bills"_\n🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n📅 *Attendance:* e.g. _"Today attendance"_\n💰 *Revenue:* e.g. _"This month billing"_\n🔄 *Change Firm:* Type \`/firm\` (Vithal / RV / Both)\n━━━━━━━━━━━━━━━━━━━━━`;
+  return {
+    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\nAap ye puch sakte hain:\n\n🏢 *Company Bills / Due:* e.g. _"JSW pending"_, _"Bisleri bills"_\n🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n📅 *Attendance:* e.g. _"Today attendance"_\n💰 *Revenue:* e.g. _"This month billing"_\n\n👇 *Select Active Firm below:*`,
+    buttons: renderFirmRadioButtons(activeFirm),
+  };
 }
