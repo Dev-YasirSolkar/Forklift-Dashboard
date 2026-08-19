@@ -103,9 +103,15 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // 3. Quick Fleet Shortcuts
-        if (cbData === 'quick:workshop' || cbData === 'quick:onsite' || cbData === 'quick:fleet') {
+        // 3. Quick Fleet & Pending Shortcuts
+        if (cbData === 'quick:workshop' || cbData === 'quick:onsite' || cbData === 'quick:fleet' || cbData === 'quick:pending') {
           const activeFirm = await getUserActiveFirm(chatId);
+          if (cbData === 'quick:pending') {
+            const res = await getTopPendingBalances(activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            return NextResponse.json({ ok: true });
+          }
           const filter = cbData === 'quick:workshop' ? 'Workshop' : cbData === 'quick:onsite' ? 'On-Site' : undefined;
           const res = await getFleetStatus(filter, activeFirm);
           await answerTelegramCallback(token, callbackId);
