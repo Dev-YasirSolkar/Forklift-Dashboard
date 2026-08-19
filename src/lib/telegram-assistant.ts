@@ -1,13 +1,15 @@
 /**
  * @fileOverview Smart Telegram Assistant Module
  * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output,
- * precise intent routing, full non-truncated invoice lists, and multi-company disambiguation.
+ * permanent admin session persistence, strict firm separation (Vithal vs RV vs Both), intent routing, and multi-company disambiguation.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs, getDoc, doc, setDoc } from 'firebase/firestore';
 import { firebaseConfig } from '@/firebase/config';
+
+export type EnterpriseType = 'Vithal' | 'RV' | 'Both';
 
 interface CompanySummary {
   id: string;
@@ -18,11 +20,11 @@ interface CompanySummary {
   contactNumber?: string;
 }
 
-// In-memory cache of authorized admin chat IDs
+// In-memory cache for fast lookups
 const verifiedAdminChatIds = new Set<string>();
-
-// Cache recent ambiguous company choices per chat ID for number-based selection (e.g., replying "1" or "2")
+const userActiveFirmMap = new Map<string, EnterpriseType>();
 const chatRecentChoices = new Map<string, string[]>();
+const awaitingFirmSelection = new Set<string>();
 
 export const ADMIN_SECRET_CODE = '2028';
 
@@ -69,7 +71,7 @@ export async function getAuthenticatedFirestore() {
 }
 
 /**
- * Check if the given chatId is an authorized Admin.
+ * Check if the given chatId is an authorized Admin (Permanent Persistence).
  */
 export async function isTelegramAdmin(chatId: string): Promise<boolean> {
   if (verifiedAdminChatIds.has(chatId)) return true;
@@ -79,6 +81,10 @@ export async function isTelegramAdmin(chatId: string): Promise<boolean> {
     const adminDoc = await getDoc(doc(firestore, 'telegramAdmins', chatId));
     if (adminDoc.exists()) {
       verifiedAdminChatIds.add(chatId);
+      const data = adminDoc.data();
+      if (data?.activeFirm) {
+        userActiveFirmMap.set(chatId, data.activeFirm);
+      }
       return true;
     }
 
@@ -94,7 +100,77 @@ export async function isTelegramAdmin(chatId: string): Promise<boolean> {
 }
 
 /**
- * Register a chatId as Admin.
+ * Get the active firm preference for the user (Defaults to 'Both').
+ */
+export async function getUserActiveFirm(chatId: string): Promise<EnterpriseType> {
+  if (userActiveFirmMap.has(chatId)) {
+    return userActiveFirmMap.get(chatId)!;
+  }
+
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    const adminDoc = await getDoc(doc(firestore, 'telegramAdmins', chatId));
+    if (adminDoc.exists() && adminDoc.data()?.activeFirm) {
+      const firm = adminDoc.data().activeFirm as EnterpriseType;
+      userActiveFirmMap.set(chatId, firm);
+      return firm;
+    }
+  } catch (err) {
+    console.error('Fetch user firm error:', err);
+  }
+
+  return 'Both';
+}
+
+/**
+ * Set the active firm preference for the user permanently.
+ */
+export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): Promise<string> {
+  userActiveFirmMap.set(chatId, firm);
+  awaitingFirmSelection.delete(chatId);
+
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    await setDoc(doc(firestore, 'telegramAdmins', chatId), {
+      chatId,
+      activeFirm: firm,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Save active firm error:', err);
+  }
+
+  const label = firm === 'Vithal' 
+    ? '🏭 VITHAL ENTERPRISES' 
+    : firm === 'RV' 
+      ? '🏢 R.V ENTERPRISES' 
+      : '🌐 BOTH FIRMS (Vithal + RV)';
+
+  let msg = `✅ *Active Firm Set To:* ${label}\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Ab saare bills, fleet aur revenue queries **${label}** ke hisaab se dikhayenge.\n\n`;
+  msg += `_Firm change karne ke liye kabhi bhi \`/firm\` type karein._`;
+  return msg;
+}
+
+/**
+ * Renders the Firm Selection Menu.
+ */
+export function renderFirmSelectionMenu(chatId?: string): string {
+  if (chatId) awaitingFirmSelection.add(chatId);
+
+  let msg = `🏢 *SELECT ACTIVE FIRM / ENTERPRISE*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Aap kis firm ka data dekhna chahte hain?\n\n`;
+  msg += `1️⃣ *Vithal Enterprises* (Sirf Vithal ke bills & gadi)\n`;
+  msg += `2️⃣ *R.V Enterprises* (Sirf RV ke bills & gadi)\n`;
+  msg += `3️⃣ *Both Firms* (Vithal + RV Alag-Alag Table)\n\n`;
+  msg += `👉 Reply karein: \`1\`, \`2\`, ya \`3\` (ya type karein \`/vithal\`, \`/rv\`, \`/both\`)`;
+  return msg;
+}
+
+/**
+ * Register a chatId as Admin (Permanent Lifetime Persistence).
  */
 export async function registerTelegramAdmin(chatId: string, secretOrEmail: string): Promise<boolean> {
   const input = (secretOrEmail || '').toLowerCase().trim();
@@ -111,6 +187,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
     await setDoc(doc(firestore, 'telegramAdmins', chatId), {
       chatId,
       passcode: ADMIN_SECRET_CODE,
+      activeFirm: 'Both',
       registeredAt: new Date().toISOString(),
       role: 'super_admin',
     }, { merge: true });
@@ -122,15 +199,12 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 }
 
 /**
- * Query company details based on specific intent:
- * - 'pending': only pending balance and complete unpaid bills list
- * - 'bills': all invoices history (paid & unpaid)
- * - 'forklifts': forklifts deployed at this company
- * - 'all': complete summary
+ * Query company details strictly respecting the active firm scope (Vithal vs RV vs Both).
  */
 export async function getCompanyDetailByIntent(
   companyName: string, 
-  intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all'
+  intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all',
+  activeFirm: EnterpriseType = 'Both'
 ): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
@@ -147,30 +221,36 @@ export async function getCompanyDetailByIntent(
   const company = matchedCompanyDoc.data() as CompanySummary;
   const companyId = matchedCompanyDoc.id;
 
-  // 1. If user specifically asked for Forklifts of this company
+  // 1. Forklifts Intent
   if (intent === 'forklifts') {
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
-    const companyForklifts = forkliftsSnap.docs
+    let companyForklifts = forkliftsSnap.docs
       .map(d => d.data())
       .filter(f => {
         const site = String(f.siteCompany || '').toLowerCase();
         return site.includes(company.name.toLowerCase()) || company.name.toLowerCase().includes(site);
       });
 
-    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()} (${companyForklifts.length})*\n`;
+    if (activeFirm !== 'Both') {
+      companyForklifts = companyForklifts.filter(f => (f.firm || 'Vithal') === activeFirm);
+    }
+
+    const firmTag = activeFirm === 'Both' ? 'ALL FIRMS' : activeFirm.toUpperCase();
+    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()} [${firmTag}] (${companyForklifts.length})*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     if (companyForklifts.length === 0) {
-      msg += `_No forklifts currently recorded at this client's site._\n`;
+      msg += `_No forklifts currently recorded for ${activeFirm} at this client's site._\n`;
     } else {
       msg += `\`\`\`text\n`;
-      msg += `┌──────────┬──────────────────┬──────────┬─────────────┐\n`;
-      msg += `│ Serial # │ Make / Model     │ Capacity │ Site Area   │\n`;
-      msg += `├──────────┼──────────────────┼──────────┼─────────────┤\n`;
+      msg += `┌──────────┬────────┬──────────────────┬──────────┐\n`;
+      msg += `│ Serial # │ Firm   │ Make / Model     │ Capacity │\n`;
+      msg += `├──────────┼────────┼──────────────────┼──────────┤\n`;
       companyForklifts.forEach(f => {
         const mm = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(mm, 16)} │ ${pad(f.capacity || 'N/A', 8)} │ ${pad(f.siteArea || 'Site', 11)} │\n`;
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(mm, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
       });
-      msg += `└──────────┴──────────────────┴──────────┴─────────────┘\n`;
+      msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
     return msg;
@@ -186,105 +266,134 @@ export async function getCompanyDetailByIntent(
   if (invoicesSnap.empty) {
     let msg = `🏢 *${company.name.toUpperCase()}*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `📌 *Status:* No invoices recorded yet in dashboard.\n`;
+    msg += `📌 *Status:* No invoices recorded yet.\n`;
     if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
     if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
     if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
-    if (company.address) msg += `📍 *Address:* ${company.address}\n`;
     return msg;
   }
-
-  let totalBilled = 0;
-  let totalReceived = 0;
-  let totalTds = 0;
-  let totalOtherDeductions = 0;
 
   const invoiceMap: Record<string, { billNo: number | string; date: string; amount: number; received: number; enterprise: string }> = {};
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
+    const enterprise = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+    
+    // Strict firm filtering if not 'Both'
+    if (activeFirm !== 'Both' && enterprise !== activeFirm) {
+      return;
+    }
+
     const grandTotal = Number(inv.grandTotal || 0);
-    totalBilled += grandTotal;
     invoiceMap[d.id] = {
       billNo: inv.billNo || 'N/A',
       date: inv.billDate || inv.billingMonth || '',
       amount: grandTotal,
       received: 0,
-      enterprise: inv.enterprise || 'Vithal',
+      enterprise,
     };
   });
 
   paymentsSnap.docs.forEach(d => {
     const pay = d.data();
-    const rec = Number(pay.receivedAmount || 0);
-    const tds = Number(pay.tdsDeducted || 0);
-    const oth = Number(pay.otherDeductions || 0);
-    totalReceived += rec;
-    totalTds += tds;
-    totalOtherDeductions += oth;
-
     if (pay.invoiceId && invoiceMap[pay.invoiceId]) {
+      const rec = Number(pay.receivedAmount || 0);
+      const tds = Number(pay.tdsDeducted || 0);
+      const oth = Number(pay.otherDeductions || 0);
       invoiceMap[pay.invoiceId].received += (rec + tds + oth);
     }
   });
 
-  const pendingBalance = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDeductions));
-  const unpaidInvoices = Object.values(invoiceMap).filter(inv => (inv.amount - inv.received) > 1);
-  const allInvoicesList = Object.values(invoiceMap);
+  const filteredInvoices = Object.values(invoiceMap);
 
-  // 3. User specifically asked for ALL BILLS / INVOICE LIST
+  if (filteredInvoices.length === 0) {
+    return `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n📌 No invoices found under *${activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'}* for this client.\n_Switch firm using \`/both\` to see all records._`;
+  }
+
+  const unpaidInvoices = filteredInvoices.filter(inv => (inv.amount - inv.received) > 1);
+
+  // Breakdown by firm (Vithal vs RV)
+  const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
+  const rvInvoices = filteredInvoices.filter(i => i.enterprise === 'RV');
+
+  const vithalTotal = vithalInvoices.reduce((s, i) => s + i.amount, 0);
+  const vithalRec = vithalInvoices.reduce((s, i) => s + i.received, 0);
+  const vithalDue = Math.max(0, vithalTotal - vithalRec);
+
+  const rvTotal = rvInvoices.reduce((s, i) => s + i.amount, 0);
+  const rvRec = rvInvoices.reduce((s, i) => s + i.received, 0);
+  const rvDue = Math.max(0, rvTotal - rvRec);
+
+  const firmHeader = activeFirm === 'Both' ? 'VITHAL & R.V ENTERPRISES' : activeFirm === 'RV' ? 'R.V ENTERPRISES' : 'VITHAL ENTERPRISES';
+
+  // 3. User specifically asked for ALL BILLS / INVOICES
   if (intent === 'bills') {
-    let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()} (${allInvoicesList.length})*\n`;
+    let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()}*\n`;
+    text += `🏢 Firm Scope: *${firmHeader}* (${filteredInvoices.length} Bills)\n`;
     text += `━━━━━━━━━━━━━━━━━━━━━\n`;
     text += `\`\`\`text\n`;
     text += `┌─────────┬────────┬──────────────┬─────────────┐\n`;
     text += `│ Bill #  │ Firm   │ Total (₹)    │ Status      │\n`;
     text += `├─────────┼────────┼──────────────┼─────────────┤\n`;
-    allInvoicesList.forEach(inv => {
+    filteredInvoices.forEach(inv => {
       const due = inv.amount - inv.received;
-      const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
       const status = due <= 1 ? 'PAID' : `DUE ₹${formatInr(due)}`;
-      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(status, 11)} │\n`;
+      text += `│ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(status, 11)} │\n`;
     });
     text += `└─────────┴────────┴──────────────┴─────────────┘\n`;
     text += `\`\`\`\n`;
-    text += `💰 *Total Billed:* ₹${formatInr(totalBilled)} | ⚠️ *Total Due:* ₹${formatInr(pendingBalance)}\n`;
     return text;
   }
 
-  // 4. Default or 'pending': Pending & Complete Unpaid Bills Table
+  // 4. Default / Pending View: Clean Non-Mixed Tables
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
+  text += `🔖 Scope: *${firmHeader}*\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `\`\`\`text\n`;
-  text += `┌──────────────────────┬──────────────┐\n`;
-  text += `│ METRIC               │ AMOUNT (₹)   │\n`;
-  text += `├──────────────────────┼──────────────┤\n`;
-  text += `│ Total Invoiced       │ ${pad(formatInr(totalBilled), 12, 'right')} │\n`;
-  text += `│ Total Received       │ ${pad(formatInr(totalReceived), 12, 'right')} │\n`;
-  if (totalTds > 0) {
-    text += `│ TDS Deducted         │ ${pad(formatInr(totalTds), 12, 'right')} │\n`;
-  }
-  text += `├──────────────────────┼──────────────┤\n`;
-  text += `│ OUTSTANDING DUE      │ ${pad(formatInr(pendingBalance), 12, 'right')} │\n`;
-  text += `└──────────────────────┴──────────────┘\n`;
-  text += `\`\`\`\n`;
 
-  // COMPLETE list of unpaid bills - NEVER truncated!
+  // Overview Table (Separate by firm if Both, or Single firm)
+  if (activeFirm === 'Both') {
+    text += `\`\`\`text\n`;
+    text += `┌──────────────────────┬──────────────┬──────────────┐\n`;
+    text += `│ ENTERPRISE           │ BILLED (₹)   │ DUE (₹)      │\n`;
+    text += `├──────────────────────┼──────────────┼──────────────┤\n`;
+    text += `│ Vithal Enterprises   │ ${pad(formatInr(vithalTotal), 12, 'right')} │ ${pad(formatInr(vithalDue), 12, 'right')} │\n`;
+    text += `│ R.V Enterprises      │ ${pad(formatInr(rvTotal), 12, 'right')} │ ${pad(formatInr(rvDue), 12, 'right')} │\n`;
+    text += `├──────────────────────┼──────────────┼──────────────┤\n`;
+    text += `│ TOTAL COMBINED       │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │ ${pad(formatInr(vithalDue + rvDue), 12, 'right')} │\n`;
+    text += `└──────────────────────┴──────────────┴──────────────┘\n`;
+    text += `\`\`\`\n`;
+  } else {
+    const total = activeFirm === 'RV' ? rvTotal : vithalTotal;
+    const rec = activeFirm === 'RV' ? rvRec : vithalRec;
+    const due = activeFirm === 'RV' ? rvDue : vithalDue;
+
+    text += `\`\`\`text\n`;
+    text += `┌──────────────────────┬──────────────┐\n`;
+    text += `│ METRIC (${pad(activeFirm, 6)})      │ AMOUNT (₹)   │\n`;
+    text += `├──────────────────────┼──────────────┤\n`;
+    text += `│ Total Billed         │ ${pad(formatInr(total), 12, 'right')} │\n`;
+    text += `│ Total Received       │ ${pad(formatInr(rec), 12, 'right')} │\n`;
+    text += `├──────────────────────┼──────────────┤\n`;
+    text += `│ OUTSTANDING DUE      │ ${pad(formatInr(due), 12, 'right')} │\n`;
+    text += `└──────────────────────┴──────────────┘\n`;
+    text += `\`\`\`\n`;
+  }
+
+  // Complete List of Unpaid Bills (Strictly Distinct)
   if (unpaidInvoices.length > 0) {
-    text += `📋 *Complete Unpaid Bills (${unpaidInvoices.length}):*\n`;
+    text += `📋 *Unpaid Bills (${unpaidInvoices.length}):*\n`;
     text += `\`\`\`text\n`;
     text += `┌─────────┬────────┬──────────────┬────────────┐\n`;
     text += `│ Bill #  │ Firm   │ Due (₹)      │ Date       │\n`;
     text += `├─────────┼────────┼──────────────┼────────────┤\n`;
     unpaidInvoices.forEach(inv => {
       const due = inv.amount - inv.received;
-      const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
+      text += `│ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
     });
     text += `└─────────┴────────┴──────────────┴────────────┘\n`;
     text += `\`\`\`\n`;
   } else {
-    text += `✨ *All invoices are fully settled!* 🎉\n`;
+    text += `✨ *All bills for ${firmHeader} are fully settled!* 🎉\n`;
   }
 
   if (company.contactNumber || company.kindAttn) {
@@ -295,9 +404,9 @@ export async function getCompanyDetailByIntent(
 }
 
 /**
- * Get fleet status in a clean table format.
+ * Get fleet status in a clean table format filtered by active firm.
  */
-export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): Promise<string> {
+export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', activeFirm: EnterpriseType = 'Both'): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'forklifts'));
 
@@ -305,46 +414,53 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
     return '🚜 *No forklifts found in the database.*';
   }
 
-  const all = snap.docs.map(d => d.data());
+  let all = snap.docs.map(d => d.data());
+  if (activeFirm !== 'Both') {
+    all = all.filter(f => (f.firm || 'Vithal') === activeFirm);
+  }
+
   const workshop = all.filter(f => f.locationType === 'Workshop');
   const onSite = all.filter(f => f.locationType === 'On-Site');
   const notConfirmed = all.filter(f => f.locationType === 'Not Confirm');
+  const firmLabel = activeFirm === 'Both' ? 'BOTH FIRMS' : activeFirm.toUpperCase();
 
   if (locationFilter === 'Workshop') {
-    let msg = `🏭 *WORKSHOP IDLE FORKLIFTS (${workshop.length})*\n`;
+    let msg = `🏭 *WORKSHOP IDLE FORKLIFTS [${firmLabel}] (${workshop.length})*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     if (workshop.length === 0) {
-      msg += '_No forklifts currently idle in workshop._';
+      msg += `_No forklifts currently idle in workshop for ${activeFirm}._`;
     } else {
       msg += `\`\`\`text\n`;
-      msg += `┌──────────┬──────────────────┬──────────┐\n`;
-      msg += `│ Serial # │ Make / Model     │ Capacity │\n`;
-      msg += `├──────────┼──────────────────┼──────────┤\n`;
+      msg += `┌──────────┬────────┬──────────────────┬──────────┐\n`;
+      msg += `│ Serial # │ Firm   │ Make / Model     │ Capacity │\n`;
+      msg += `├──────────┼────────┼──────────────────┼──────────┤\n`;
       workshop.forEach(f => {
         const makeModel = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(makeModel, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(makeModel, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
       });
-      msg += `└──────────┴──────────────────┴──────────┘\n`;
+      msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
     return msg;
   }
 
   if (locationFilter === 'On-Site') {
-    let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS (${onSite.length})*\n`;
+    let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS [${firmLabel}] (${onSite.length})*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     if (onSite.length === 0) {
-      msg += '_No forklifts currently deployed on-site._';
+      msg += `_No forklifts currently deployed on-site for ${activeFirm}._`;
     } else {
       msg += `\`\`\`text\n`;
-      msg += `┌──────────┬──────────────────────┬──────────┐\n`;
-      msg += `│ Serial # │ Client / Site        │ Capacity │\n`;
-      msg += `├──────────┼──────────────────────┼──────────┤\n`;
+      msg += `┌──────────┬────────┬──────────────────────┬──────────┐\n`;
+      msg += `│ Serial # │ Firm   │ Client / Site        │ Capacity │\n`;
+      msg += `├──────────┼────────┼──────────────────────┼──────────┤\n`;
       onSite.forEach(f => {
         const site = f.siteCompany || f.siteArea || 'Client Site';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(site, 20)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(site, 20)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
       });
-      msg += `└──────────┴──────────────────────┴──────────┘\n`;
+      msg += `└──────────┴────────┴──────────────────────┴──────────┘\n`;
       msg += `\`\`\`\n`;
     }
     return msg;
@@ -352,7 +468,7 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
 
   const utilRate = all.length > 0 ? ((onSite.length / all.length) * 100).toFixed(0) : '0';
 
-  let msg = `🚜 *TOTAL FLEET SUMMARY*\n`;
+  let msg = `🚜 *TOTAL FLEET SUMMARY [${firmLabel}]*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `\`\`\`text\n`;
   msg += `┌──────────────────────┬──────────────┐\n`;
@@ -463,9 +579,9 @@ export async function getTodayAttendanceSummary(): Promise<string> {
 }
 
 /**
- * Get current month billing summary as a table.
+ * Get current month billing summary separated cleanly by firm.
  */
-export async function getMonthlyBillingSummary(): Promise<string> {
+export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Both'): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
   const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
@@ -497,14 +613,30 @@ export async function getMonthlyBillingSummary(): Promise<string> {
   let msg = `📊 *BILLING SUMMARY (${monthName.toUpperCase()})*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `\`\`\`text\n`;
-  msg += `┌──────────────────────┬───────┬──────────────┐\n`;
-  msg += `│ Enterprise           │ Bills │ Amount (₹)   │\n`;
-  msg += `├──────────────────────┼───────┼──────────────┤\n`;
-  msg += `│ Vithal Enterprises   │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
-  msg += `│ R.V Enterprises      │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
-  msg += `├──────────────────────┼───────┼──────────────┤\n`;
-  msg += `│ TOTAL REVENUE        │ ${pad(vithalCount + rvCount, 5)} │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │\n`;
-  msg += `└──────────────────────┴───────┴──────────────┘\n`;
+
+  if (activeFirm === 'Both') {
+    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
+    msg += `│ Enterprise           │ Bills │ Amount (₹)   │\n`;
+    msg += `├──────────────────────┼───────┼──────────────┤\n`;
+    msg += `│ Vithal Enterprises   │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
+    msg += `│ R.V Enterprises      │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
+    msg += `├──────────────────────┼───────┼──────────────┤\n`;
+    msg += `│ TOTAL REVENUE        │ ${pad(vithalCount + rvCount, 5)} │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │\n`;
+    msg += `└──────────────────────┴───────┴──────────────┘\n`;
+  } else if (activeFirm === 'Vithal') {
+    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
+    msg += `│ VITHAL ENTERPRISES   │ Bills │ Amount (₹)   │\n`;
+    msg += `├──────────────────────┼───────┼──────────────┤\n`;
+    msg += `│ Current Month Bills  │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
+    msg += `└──────────────────────┴───────┴──────────────┘\n`;
+  } else {
+    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
+    msg += `│ R.V ENTERPRISES      │ Bills │ Amount (₹)   │\n`;
+    msg += `├──────────────────────┼───────┼──────────────┤\n`;
+    msg += `│ Current Month Bills  │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
+    msg += `└──────────────────────┴───────┴──────────────┘\n`;
+  }
+
   msg += `\`\`\`\n`;
   return msg;
 }
@@ -559,7 +691,7 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization, disambiguation, and whole-word matching.
+ * Dynamically queries Firestore with strict intent prioritization, firm isolation, and whole-word matching.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<string> {
   const raw = userPrompt.trim();
@@ -567,24 +699,45 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
 
   try {
     const firestore = await getAuthenticatedFirestore();
+    const activeFirm = await getUserActiveFirm(chatId);
 
-    // ─── 0. CHECK IF USER REPLIED TO A RECENT MULTI-CHOICE SELECTION ────────
+    // ─── 0. FIRM SELECTION / SWITCHING COMMANDS ────────────────────────────
+    if (
+      lower === '/firm' || lower === 'firm' || lower === '/switch' || 
+      lower === 'switch' || lower === 'change firm' || lower === 'select firm'
+    ) {
+      return renderFirmSelectionMenu(chatId);
+    }
+
+    if (lower === '/vithal' || lower === 'vithal' || (awaitingFirmSelection.has(chatId) && (raw === '1' || lower.includes('vithal')))) {
+      return await setUserActiveFirm(chatId, 'Vithal');
+    }
+
+    if (lower === '/rv' || lower === 'rv' || (awaitingFirmSelection.has(chatId) && (raw === '2' || lower.includes('rv')))) {
+      return await setUserActiveFirm(chatId, 'RV');
+    }
+
+    if (lower === '/both' || lower === 'both' || (awaitingFirmSelection.has(chatId) && (raw === '3' || lower.includes('both')))) {
+      return await setUserActiveFirm(chatId, 'Both');
+    }
+
+    // ─── 1. CHECK IF USER REPLIED TO A RECENT MULTI-CHOICE SELECTION ────────
     if (/^\d{1,2}$/.test(raw) && chatId && chatRecentChoices.has(chatId)) {
       const choices = chatRecentChoices.get(chatId) || [];
       const index = parseInt(raw, 10) - 1;
       if (index >= 0 && index < choices.length) {
         const selectedCompany = choices[index];
         chatRecentChoices.delete(chatId);
-        return await getCompanyDetailByIntent(selectedCompany, 'all');
+        return await getCompanyDetailByIntent(selectedCompany, 'all', activeFirm);
       }
     }
 
-    // ─── 1. ALL COMPANIES LIST ─────────────────────────────────────────────
+    // ─── 2. ALL COMPANIES LIST ─────────────────────────────────────────────
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
       return await listAllCompanies();
     }
 
-    // ─── 2. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
+    // ─── 3. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
     if (
       hasWord(lower, 'workshop') ||
       hasWord(lower, 'idle') ||
@@ -594,10 +747,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       lower.includes('workshop forklift') ||
       lower.includes('workshop me')
     ) {
-      return await getFleetStatus('Workshop');
+      return await getFleetStatus('Workshop', activeFirm);
     }
 
-    // ─── 3. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
+    // ─── 4. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
     if (
       hasWord(lower, 'onsite') ||
       hasWord(lower, 'on-site') ||
@@ -606,10 +759,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       lower.includes('on site') ||
       lower.includes('client site')
     ) {
-      return await getFleetStatus('On-Site');
+      return await getFleetStatus('On-Site', activeFirm);
     }
 
-    // ─── 4. OVERALL FLEET SUMMARY ──────────────────────────────────────────
+    // ─── 5. OVERALL FLEET SUMMARY ──────────────────────────────────────────
     if (
       hasWord(lower, 'fleet') ||
       hasWord(lower, 'forklift') ||
@@ -620,10 +773,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       lower.includes('total unit') ||
       lower.includes('total fleet')
     ) {
-      return await getFleetStatus();
+      return await getFleetStatus(undefined, activeFirm);
     }
 
-    // ─── 5. ATTENDANCE & STAFF ─────────────────────────────────────────────
+    // ─── 6. ATTENDANCE & STAFF ─────────────────────────────────────────────
     if (
       hasWord(lower, 'attendance') ||
       hasWord(lower, 'absent') ||
@@ -638,15 +791,15 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getTodayAttendanceSummary();
     }
 
-    // ─── 6. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
+    // ─── 7. BILLING / REVENUE / TOTAL SALES ────────────────────────────────
     if (
       (hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') || lower.includes('this month') || lower.includes('is mahine')) &&
       !lower.includes('company')
     ) {
-      return await getMonthlyBillingSummary();
+      return await getMonthlyBillingSummary(activeFirm);
     }
 
-    // ─── 7. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
+    // ─── 8. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
     for (const d of forkliftsSnap.docs) {
       const sn = String(d.data().serialNumber || '').trim();
@@ -655,11 +808,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 8. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & DISAMBIGUATION ───
+    // ─── 9. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & DISAMBIGUATION ───
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
-    // Determine sub-intent for the company:
     let companyIntent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
     if (hasWord(lower, 'pending') || hasWord(lower, 'due') || hasWord(lower, 'balance') || hasWord(lower, 'baki') || hasWord(lower, 'unpaid')) {
       companyIntent = 'pending';
@@ -683,13 +835,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     for (const companyFullName of allCompanyNames) {
       const companyLower = companyFullName.toLowerCase();
 
-      // Exact full name match
       if (lower.includes(companyLower)) {
         matchedCompanies.push(companyFullName);
         continue;
       }
 
-      // Check distinct brand keywords
       const brandWords = companyLower
         .split(/[\s,./()]+/)
         .filter(w => w.length >= 3 && !stopWords.has(w));
@@ -701,14 +851,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // Single company matched:
     if (matchedCompanies.length === 1) {
-      return await getCompanyDetailByIntent(matchedCompanies[0], companyIntent);
+      return await getCompanyDetailByIntent(matchedCompanies[0], companyIntent, activeFirm);
     }
 
-    // Multiple companies matched (Disambiguation required!):
     if (matchedCompanies.length > 1) {
-      // Find the matched search keyword
       const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai)\b/gi, '').trim() || raw;
       return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
     }
@@ -718,6 +865,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     return `⚠️ *Error accessing data:* ${err.message || 'Database error'}`;
   }
 
-  // Helpful response if no specific entity was recognized
-  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Bills / Pending:* Type company name (e.g. _"JSW pending"_, _"Bisleri bills"_, ya _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop"_, _"On-site"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
+  // Helpful response
+  const activeFirm = await getUserActiveFirm(chatId);
+  return `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\nAap ye puch sakte hain:\n\n🏢 *Company Bills / Pending:* e.g. _"JSW pending"_, _"Bisleri bills"_\n🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n📅 *Attendance:* e.g. _"Today attendance"_\n💰 *Revenue:* e.g. _"This month billing"_\n🔄 *Change Firm:* Type \`/firm\` (Vithal / RV / Both)\n━━━━━━━━━━━━━━━━━━━━━`;
 }
