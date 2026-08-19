@@ -107,13 +107,13 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
 
   // Find exact or partial match
   let matchedCompanyDoc = companiesSnap.docs.find(d => {
-    const name = (d.data().name || '').toLowerCase().trim();
+    const name = String(d.data().name || '').toLowerCase().trim();
     return name === searchLower;
   });
 
   if (!matchedCompanyDoc) {
     matchedCompanyDoc = companiesSnap.docs.find(d => {
-      const name = (d.data().name || '').toLowerCase().trim();
+      const name = String(d.data().name || '').toLowerCase().trim();
       return name.includes(searchLower) || searchLower.includes(name);
     });
   }
@@ -272,7 +272,7 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
   const searchLower = serialQuery.toLowerCase().trim();
 
   const matched = snap.docs.find(d => {
-    const sn = (d.data().serialNumber || '').toLowerCase().trim();
+    const sn = String(d.data().serialNumber || '').toLowerCase().trim();
     return sn.includes(searchLower) || searchLower.includes(sn);
   });
 
@@ -419,12 +419,12 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
     // 2. Dynamic Company Name Search
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     for (const d of companiesSnap.docs) {
-      const companyName = (d.data().name || '').toLowerCase().trim();
+      const companyName = String(d.data().name || '').toLowerCase().trim();
       if (companyName.length > 2) {
-        const words = companyName.split(/[\s,./()]+/).filter(w => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise', 'llp', 'and', 'the', 'services', 'solutions', 'international', 'internationals', 'group', 'india'].includes(w));
-        const matched = lower.includes(companyName) || words.some(w => lower.includes(w));
+        const words = companyName.split(/[\s,./()]+/).filter((w: string) => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise', 'llp', 'and', 'the', 'services', 'solutions', 'international', 'internationals', 'group', 'india'].includes(w));
+        const matched = lower.includes(companyName) || words.some((w: string) => lower.includes(w));
         if (matched) {
-          return await getCompanyPaymentSummary(d.data().name);
+          return await getCompanyPaymentSummary(String(d.data().name || ''));
         }
       }
     }
@@ -432,9 +432,9 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
     // 3. Forklift Specific Serial Search
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
     for (const d of forkliftsSnap.docs) {
-      const sn = (d.data().serialNumber || '').toLowerCase().trim();
-      if (sn.length > 2 && lower.includes(sn)) {
-        return await getForkliftDetail(d.data().serialNumber);
+      const sn = String(d.data().serialNumber || '').toLowerCase().trim();
+      if (sn.length > 1 && lower.includes(sn)) {
+        return await getForkliftDetail(String(d.data().serialNumber || ''));
       }
     }
 
