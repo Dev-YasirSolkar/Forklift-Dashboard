@@ -259,7 +259,7 @@ export async function POST(req: Request) {
 
       // ─── 5. ADMIN NATURAL LANGUAGE QUERY (AI POWERED) ────────────────────
       if (isAdmin) {
-        const answer = await processAdminNaturalLanguageQuery(rawText);
+        const answer = await processAdminNaturalLanguageQuery(rawText, chatId);
         await sendTelegramMessage(token, chatId, answer);
         return NextResponse.json({ ok: true });
       }

@@ -1,6 +1,7 @@
 /**
  * @fileOverview Smart Telegram Assistant Module
- * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output.
+ * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output,
+ * precise intent routing, full non-truncated invoice lists, and multi-company disambiguation.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -20,6 +21,9 @@ interface CompanySummary {
 // In-memory cache of authorized admin chat IDs
 const verifiedAdminChatIds = new Set<string>();
 
+// Cache recent ambiguous company choices per chat ID for number-based selection (e.g., replying "1" or "2")
+const chatRecentChoices = new Map<string, string[]>();
+
 export const ADMIN_SECRET_CODE = '2028';
 
 /**
@@ -33,10 +37,19 @@ function pad(str: string | number, length: number, align: 'left' | 'right' = 'le
 }
 
 /**
- * Format currency in Indian number system with ₹.
+ * Format currency in Indian number system.
  */
 function formatInr(num: number): string {
   return num.toLocaleString('en-IN');
+}
+
+/**
+ * Safe whole word check.
+ */
+function hasWord(text: string, word: string): boolean {
+  const cleanWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(^|[^a-zA-Z0-9])${cleanWord}([^a-zA-Z0-9]|$)`, 'i');
+  return regex.test(text);
 }
 
 /**
@@ -109,51 +122,77 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 }
 
 /**
- * Query pending payments and invoice balance for a company formatted as a table.
+ * Query company details based on specific intent:
+ * - 'pending': only pending balance and complete unpaid bills list
+ * - 'bills': all invoices history (paid & unpaid)
+ * - 'forklifts': forklifts deployed at this company
+ * - 'all': complete summary
  */
-export async function getCompanyPaymentSummary(companyQuery: string): Promise<string> {
+export async function getCompanyDetailByIntent(
+  companyName: string, 
+  intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all'
+): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
-  
-  // 1. Find Company
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
-  const searchLower = companyQuery.toLowerCase().trim();
 
-  let matchedCompanyDoc = companiesSnap.docs.find(d => {
+  const matchedCompanyDoc = companiesSnap.docs.find(d => {
     const name = String(d.data().name || '').toLowerCase().trim();
-    return name === searchLower;
+    return name === companyName.toLowerCase().trim();
   });
 
   if (!matchedCompanyDoc) {
-    matchedCompanyDoc = companiesSnap.docs.find(d => {
-      const name = String(d.data().name || '').toLowerCase().trim();
-      return name.includes(searchLower) || searchLower.includes(name);
-    });
-  }
-
-  if (!matchedCompanyDoc) {
-    return `❌ *Company "${companyQuery}" Not Found*\n\nType *"all companies"* to see all registered clients.`;
+    return `❌ *Company "${companyName}" Not Found*\n\nType *"all companies"* to see all registered clients.`;
   }
 
   const company = matchedCompanyDoc.data() as CompanySummary;
   const companyId = matchedCompanyDoc.id;
 
-  // 2. Fetch Invoices
+  // 1. If user specifically asked for Forklifts of this company
+  if (intent === 'forklifts') {
+    const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
+    const companyForklifts = forkliftsSnap.docs
+      .map(d => d.data())
+      .filter(f => {
+        const site = String(f.siteCompany || '').toLowerCase();
+        return site.includes(company.name.toLowerCase()) || company.name.toLowerCase().includes(site);
+      });
+
+    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()} (${companyForklifts.length})*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    if (companyForklifts.length === 0) {
+      msg += `_No forklifts currently recorded at this client's site._\n`;
+    } else {
+      msg += `\`\`\`text\n`;
+      msg += `┌──────────┬──────────────────┬──────────┬─────────────┐\n`;
+      msg += `│ Serial # │ Make / Model     │ Capacity │ Site Area   │\n`;
+      msg += `├──────────┼──────────────────┼──────────┼─────────────┤\n`;
+      companyForklifts.forEach(f => {
+        const mm = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(mm, 16)} │ ${pad(f.capacity || 'N/A', 8)} │ ${pad(f.siteArea || 'Site', 11)} │\n`;
+      });
+      msg += `└──────────┴──────────────────┴──────────┴─────────────┘\n`;
+      msg += `\`\`\`\n`;
+    }
+    return msg;
+  }
+
+  // 2. Fetch Invoices & Payments
   const invoicesQuery = query(collection(firestore, 'invoices'), where('companyId', '==', companyId));
-  const invoicesSnap = await getDocs(invoicesQuery);
+  const [invoicesSnap, paymentsSnap] = await Promise.all([
+    getDocs(invoicesQuery),
+    getDocs(query(collection(firestore, 'payments'), where('companyId', '==', companyId)))
+  ]);
 
   if (invoicesSnap.empty) {
     let msg = `🏢 *${company.name.toUpperCase()}*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `📌 *Status:* No invoices recorded yet.\n`;
+    msg += `📌 *Status:* No invoices recorded yet in dashboard.\n`;
     if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
     if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
     if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
+    if (company.address) msg += `📍 *Address:* ${company.address}\n`;
     return msg;
   }
-
-  // 3. Fetch Payments
-  const paymentsQuery = query(collection(firestore, 'payments'), where('companyId', '==', companyId));
-  const paymentsSnap = await getDocs(paymentsQuery);
 
   let totalBilled = 0;
   let totalReceived = 0;
@@ -191,8 +230,29 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
 
   const pendingBalance = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDeductions));
   const unpaidInvoices = Object.values(invoiceMap).filter(inv => (inv.amount - inv.received) > 1);
+  const allInvoicesList = Object.values(invoiceMap);
 
-  // Render Overview Table
+  // 3. User specifically asked for ALL BILLS / INVOICE LIST
+  if (intent === 'bills') {
+    let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()} (${allInvoicesList.length})*\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `\`\`\`text\n`;
+    text += `┌─────────┬────────┬──────────────┬─────────────┐\n`;
+    text += `│ Bill #  │ Firm   │ Total (₹)    │ Status      │\n`;
+    text += `├─────────┼────────┼──────────────┼─────────────┤\n`;
+    allInvoicesList.forEach(inv => {
+      const due = inv.amount - inv.received;
+      const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+      const status = due <= 1 ? 'PAID' : `DUE ₹${formatInr(due)}`;
+      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(status, 11)} │\n`;
+    });
+    text += `└─────────┴────────┴──────────────┴─────────────┘\n`;
+    text += `\`\`\`\n`;
+    text += `💰 *Total Billed:* ₹${formatInr(totalBilled)} | ⚠️ *Total Due:* ₹${formatInr(pendingBalance)}\n`;
+    return text;
+  }
+
+  // 4. Default or 'pending': Pending & Complete Unpaid Bills Table
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
   text += `\`\`\`text\n`;
@@ -209,23 +269,20 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   text += `└──────────────────────┴──────────────┘\n`;
   text += `\`\`\`\n`;
 
-  // Render Unpaid Bills Table if any
+  // COMPLETE list of unpaid bills - NEVER truncated!
   if (unpaidInvoices.length > 0) {
-    text += `📋 *Unpaid Bills (${unpaidInvoices.length}):*\n`;
+    text += `📋 *Complete Unpaid Bills (${unpaidInvoices.length}):*\n`;
     text += `\`\`\`text\n`;
-    text += `┌─────────┬────────┬──────────────┐\n`;
-    text += `│ Bill #  │ Firm   │ Due (₹)      │\n`;
-    text += `├─────────┼────────┼──────────────┤\n`;
-    unpaidInvoices.slice(0, 10).forEach(inv => {
+    text += `┌─────────┬────────┬──────────────┬────────────┐\n`;
+    text += `│ Bill #  │ Firm   │ Due (₹)      │ Date       │\n`;
+    text += `├─────────┼────────┼──────────────┼────────────┤\n`;
+    unpaidInvoices.forEach(inv => {
       const due = inv.amount - inv.received;
       const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(due), 12, 'right')} │\n`;
+      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
     });
-    text += `└─────────┴────────┴──────────────┘\n`;
+    text += `└─────────┴────────┴──────────────┴────────────┘\n`;
     text += `\`\`\`\n`;
-    if (unpaidInvoices.length > 10) {
-      text += `_...and ${unpaidInvoices.length - 10} more unpaid invoices._\n`;
-    }
   } else {
     text += `✨ *All invoices are fully settled!* 🎉\n`;
   }
@@ -469,35 +526,58 @@ export async function listAllCompanies(): Promise<string> {
   msg += `┌────┬──────────────────────────────────┐\n`;
   msg += `│ #  │ Company Name                     │\n`;
   msg += `├────┼──────────────────────────────────┤\n`;
-  snap.docs.slice(0, 30).forEach((d, i) => {
+  snap.docs.forEach((d, i) => {
     const c = d.data();
     msg += `│ ${pad(i + 1, 2)} │ ${pad(c.name || 'Company', 32)} │\n`;
   });
   msg += `└────┴──────────────────────────────────┘\n`;
   msg += `\`\`\`\n`;
-  if (snap.size > 30) {
-    msg += `_...and ${snap.size - 30} more companies._\n`;
-  }
-  msg += `_Type any company name (e.g. Bisleri) to view outstanding balance._`;
+  msg += `_Type any company name (e.g. Bisleri) to view pending balance._`;
   return msg;
 }
 
-function hasWord(text: string, word: string): boolean {
-  const cleanWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(^|[^a-zA-Z0-9])${cleanWord}([^a-zA-Z0-9]|$)`, 'i');
-  return regex.test(text);
+/**
+ * Disambiguation Helper: Renders interactive choice table when multiple companies match.
+ */
+function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[], chatId: string): string {
+  chatRecentChoices.set(chatId, matchedCompanies);
+
+  let msg = `🔍 *Multiple companies found for "${keyword}":*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌────┬──────────────────────────────────────────┐\n`;
+  msg += `│ #  │ Company Name                             │\n`;
+  msg += `├────┼──────────────────────────────────────────┤\n`;
+  matchedCompanies.forEach((name, i) => {
+    msg += `│ ${pad(i + 1, 2)} │ ${pad(name, 40)} │\n`;
+  });
+  msg += `└────┴──────────────────────────────────────────┘\n`;
+  msg += `\`\`\`\n`;
+  msg += `👉 *Please reply with the number (e.g. \`1\` or \`2\`) or the exact company name.*`;
+  return msg;
 }
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization and whole-word matching.
+ * Dynamically queries Firestore with strict intent prioritization, disambiguation, and whole-word matching.
  */
-export async function processAdminNaturalLanguageQuery(userPrompt: string): Promise<string> {
+export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<string> {
   const raw = userPrompt.trim();
   const lower = raw.toLowerCase();
 
   try {
     const firestore = await getAuthenticatedFirestore();
+
+    // ─── 0. CHECK IF USER REPLIED TO A RECENT MULTI-CHOICE SELECTION ────────
+    if (/^\d{1,2}$/.test(raw) && chatId && chatRecentChoices.has(chatId)) {
+      const choices = chatRecentChoices.get(chatId) || [];
+      const index = parseInt(raw, 10) - 1;
+      if (index >= 0 && index < choices.length) {
+        const selectedCompany = choices[index];
+        chatRecentChoices.delete(chatId);
+        return await getCompanyDetailByIntent(selectedCompany, 'all');
+      }
+    }
 
     // ─── 1. ALL COMPANIES LIST ─────────────────────────────────────────────
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
@@ -558,15 +638,10 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
       return await getTodayAttendanceSummary();
     }
 
-    // ─── 6. BILLING / REVENUE / TOTAL SALES ────────────────────────────────
+    // ─── 6. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
     if (
-      hasWord(lower, 'billing') ||
-      hasWord(lower, 'revenue') ||
-      hasWord(lower, 'collection') ||
-      hasWord(lower, 'turnover') ||
-      lower.includes('total bill') ||
-      lower.includes('this month billing') ||
-      lower.includes('current month bill')
+      (hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') || lower.includes('this month') || lower.includes('is mahine')) &&
+      !lower.includes('company')
     ) {
       return await getMonthlyBillingSummary();
     }
@@ -580,34 +655,62 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
       }
     }
 
-    // ─── 8. DYNAMIC COMPANY NAME SEARCH (High Confidence Word Boundary) ────
+    // ─── 8. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & DISAMBIGUATION ───
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
-    for (const d of companiesSnap.docs) {
-      const companyFullName = String(d.data().name || '').trim();
+    const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
+
+    // Determine sub-intent for the company:
+    let companyIntent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
+    if (hasWord(lower, 'pending') || hasWord(lower, 'due') || hasWord(lower, 'balance') || hasWord(lower, 'baki') || hasWord(lower, 'unpaid')) {
+      companyIntent = 'pending';
+    } else if (hasWord(lower, 'bill') || hasWord(lower, 'bills') || hasWord(lower, 'invoice') || hasWord(lower, 'invoices') || hasWord(lower, 'billing')) {
+      companyIntent = 'bills';
+    } else if (hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') || hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machine')) {
+      companyIntent = 'forklifts';
+    }
+
+    const matchedCompanies: string[] = [];
+
+    const stopWords = new Set([
+      'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
+      'llp', 'and', 'the', 'services', 'solutions', 'international',
+      'internationals', 'group', 'india', 'supply', 'chain', 'corp',
+      'corporation', 'industries', 'freight', 'logistics', 'logictics',
+      'traders', 'trading', 'works', 'company', 'ka', 'ki', 'ke', 'details',
+      'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill'
+    ]);
+
+    for (const companyFullName of allCompanyNames) {
       const companyLower = companyFullName.toLowerCase();
 
-      // Check full company name match
+      // Exact full name match
       if (lower.includes(companyLower)) {
-        return await getCompanyPaymentSummary(companyFullName);
+        matchedCompanies.push(companyFullName);
+        continue;
       }
 
-      // Check distinctive brand words
-      const stopWords = new Set([
-        'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
-        'llp', 'and', 'the', 'services', 'solutions', 'international',
-        'internationals', 'group', 'india', 'supply', 'chain', 'corp',
-        'corporation', 'industries', 'freight', 'logistics', 'logictics',
-        'traders', 'trading', 'works', 'company'
-      ]);
-
+      // Check distinct brand keywords
       const brandWords = companyLower
         .split(/[\s,./()]+/)
-        .filter(w => w.length >= 4 && !stopWords.has(w));
+        .filter(w => w.length >= 3 && !stopWords.has(w));
 
-      const matchedBrand = brandWords.some(w => hasWord(lower, w));
-      if (matchedBrand) {
-        return await getCompanyPaymentSummary(companyFullName);
+      if (brandWords.some(w => hasWord(lower, w))) {
+        if (!matchedCompanies.includes(companyFullName)) {
+          matchedCompanies.push(companyFullName);
+        }
       }
+    }
+
+    // Single company matched:
+    if (matchedCompanies.length === 1) {
+      return await getCompanyDetailByIntent(matchedCompanies[0], companyIntent);
+    }
+
+    // Multiple companies matched (Disambiguation required!):
+    if (matchedCompanies.length > 1) {
+      // Find the matched search keyword
+      const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai)\b/gi, '').trim() || raw;
+      return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
     }
 
   } catch (err: any) {
@@ -616,5 +719,5 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
   }
 
   // Helpful response if no specific entity was recognized
-  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Pending Bills:* Type company name (e.g. _"Bisleri"_, _"Varun Beverages"_, ya _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop"_, _"On-site"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
+  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Bills / Pending:* Type company name (e.g. _"JSW pending"_, _"Bisleri bills"_, ya _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop"_, _"On-site"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
 }
