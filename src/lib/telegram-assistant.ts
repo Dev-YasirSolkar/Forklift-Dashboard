@@ -1,6 +1,6 @@
 /**
  * @fileOverview Smart Telegram Assistant Module
- * Handles natural language querying over Firestore data for Admin & Employees.
+ * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -23,8 +23,24 @@ const verifiedAdminChatIds = new Set<string>();
 export const ADMIN_SECRET_CODE = '2028';
 
 /**
+ * Helper to pad strings for monospace ASCII tables.
+ */
+function pad(str: string | number, length: number, align: 'left' | 'right' = 'left'): string {
+  const s = String(str ?? '');
+  if (s.length >= length) return s.slice(0, length);
+  const diff = length - s.length;
+  return align === 'right' ? ' '.repeat(diff) + s : s + ' '.repeat(diff);
+}
+
+/**
+ * Format currency in Indian number system with ₹.
+ */
+function formatInr(num: number): string {
+  return num.toLocaleString('en-IN');
+}
+
+/**
  * Get Firestore instance with authenticated server session.
- * This guarantees full read permissions without "insufficient permissions" errors.
  */
 export async function getAuthenticatedFirestore() {
   const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -53,7 +69,6 @@ export async function isTelegramAdmin(chatId: string): Promise<boolean> {
       return true;
     }
 
-    // Check company settings
     const settingsDoc = await getDoc(doc(firestore, 'companySettings', 'telegram'));
     if (settingsDoc.exists() && settingsDoc.data()?.adminChatIds?.includes(chatId)) {
       verifiedAdminChatIds.add(chatId);
@@ -66,7 +81,7 @@ export async function isTelegramAdmin(chatId: string): Promise<boolean> {
 }
 
 /**
- * Register a chatId as Admin if the user provides the secret code 2028 or super admin email.
+ * Register a chatId as Admin.
  */
 export async function registerTelegramAdmin(chatId: string, secretOrEmail: string): Promise<boolean> {
   const input = (secretOrEmail || '').toLowerCase().trim();
@@ -74,9 +89,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
   
   const isMatch = input === ADMIN_SECRET_CODE || input.includes(ADMIN_SECRET_CODE) || (superAdminEmail && input === superAdminEmail);
 
-  if (!isMatch) {
-    return false;
-  }
+  if (!isMatch) return false;
 
   verifiedAdminChatIds.add(chatId);
 
@@ -96,7 +109,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 }
 
 /**
- * Query pending payments and invoice balance for a company.
+ * Query pending payments and invoice balance for a company formatted as a table.
  */
 export async function getCompanyPaymentSummary(companyQuery: string): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
@@ -105,7 +118,6 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
   const searchLower = companyQuery.toLowerCase().trim();
 
-  // Find exact or partial match
   let matchedCompanyDoc = companiesSnap.docs.find(d => {
     const name = String(d.data().name || '').toLowerCase().trim();
     return name === searchLower;
@@ -119,13 +131,13 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   }
 
   if (!matchedCompanyDoc) {
-    return `❌ *Company "${companyQuery}" Not Found*\n\nType *"all companies"* to see all registered clients in your dashboard.`;
+    return `❌ *Company "${companyQuery}" Not Found*\n\nType *"all companies"* to see all registered clients.`;
   }
 
   const company = matchedCompanyDoc.data() as CompanySummary;
   const companyId = matchedCompanyDoc.id;
 
-  // 2. Fetch Invoices for this company
+  // 2. Fetch Invoices
   const invoicesQuery = query(collection(firestore, 'invoices'), where('companyId', '==', companyId));
   const invoicesSnap = await getDocs(invoicesQuery);
 
@@ -136,11 +148,10 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
     if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
     if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
     if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
-    if (company.address) msg += `📍 *Address:* ${company.address}\n`;
     return msg;
   }
 
-  // 3. Fetch Payments for this company
+  // 3. Fetch Payments
   const paymentsQuery = query(collection(firestore, 'payments'), where('companyId', '==', companyId));
   const paymentsSnap = await getDocs(paymentsQuery);
 
@@ -156,8 +167,8 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
     const grandTotal = Number(inv.grandTotal || 0);
     totalBilled += grandTotal;
     invoiceMap[d.id] = {
-      billNo: inv.billNo,
-      date: inv.billDate || inv.billingMonth || 'N/A',
+      billNo: inv.billNo || 'N/A',
+      date: inv.billDate || inv.billingMonth || '',
       amount: grandTotal,
       received: 0,
       enterprise: inv.enterprise || 'Vithal',
@@ -179,40 +190,55 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   });
 
   const pendingBalance = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDeductions));
-
-  // Find unpaid or partially paid invoices
   const unpaidInvoices = Object.values(invoiceMap).filter(inv => (inv.amount - inv.received) > 1);
 
+  // Render Overview Table
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `💰 *Total Invoiced:* ₹${totalBilled.toLocaleString('en-IN')}\n`;
-  text += `✅ *Total Received:* ₹${totalReceived.toLocaleString('en-IN')}\n`;
-  if (totalTds > 0) text += `🔖 *TDS Deducted:* ₹${totalTds.toLocaleString('en-IN')}\n`;
-  text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `⚠️ *OUTSTANDING DUE:* ₹${pendingBalance.toLocaleString('en-IN')}\n\n`;
+  text += `\`\`\`text\n`;
+  text += `┌──────────────────────┬──────────────┐\n`;
+  text += `│ METRIC               │ AMOUNT (₹)   │\n`;
+  text += `├──────────────────────┼──────────────┤\n`;
+  text += `│ Total Invoiced       │ ${pad(formatInr(totalBilled), 12, 'right')} │\n`;
+  text += `│ Total Received       │ ${pad(formatInr(totalReceived), 12, 'right')} │\n`;
+  if (totalTds > 0) {
+    text += `│ TDS Deducted         │ ${pad(formatInr(totalTds), 12, 'right')} │\n`;
+  }
+  text += `├──────────────────────┼──────────────┤\n`;
+  text += `│ OUTSTANDING DUE      │ ${pad(formatInr(pendingBalance), 12, 'right')} │\n`;
+  text += `└──────────────────────┴──────────────┘\n`;
+  text += `\`\`\`\n`;
 
+  // Render Unpaid Bills Table if any
   if (unpaidInvoices.length > 0) {
-    text += `📋 *Pending Bills (${unpaidInvoices.length}):*\n`;
-    unpaidInvoices.slice(0, 8).forEach(inv => {
+    text += `📋 *Unpaid Bills (${unpaidInvoices.length}):*\n`;
+    text += `\`\`\`text\n`;
+    text += `┌─────────┬────────┬──────────────┐\n`;
+    text += `│ Bill #  │ Firm   │ Due (₹)      │\n`;
+    text += `├─────────┼────────┼──────────────┤\n`;
+    unpaidInvoices.slice(0, 10).forEach(inv => {
       const due = inv.amount - inv.received;
-      text += `• Bill #${inv.billNo} (${inv.enterprise}) - Due: ₹${due.toLocaleString('en-IN')} [${inv.date}]\n`;
+      const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+      text += `│ ${pad(inv.billNo, 7)} │ ${pad(firm, 6)} │ ${pad(formatInr(due), 12, 'right')} │\n`;
     });
-    if (unpaidInvoices.length > 8) {
-      text += `_...and ${unpaidInvoices.length - 8} more bills._\n`;
+    text += `└─────────┴────────┴──────────────┘\n`;
+    text += `\`\`\`\n`;
+    if (unpaidInvoices.length > 10) {
+      text += `_...and ${unpaidInvoices.length - 10} more unpaid invoices._\n`;
     }
   } else {
-    text += `✨ *All bills are fully paid!* 🎉\n`;
+    text += `✨ *All invoices are fully settled!* 🎉\n`;
   }
 
   if (company.contactNumber || company.kindAttn) {
-    text += `\n📞 *Contact:* ${company.kindAttn || ''} ${company.contactNumber ? `(${company.contactNumber})` : ''}\n`;
+    text += `📞 *Contact:* ${company.kindAttn || ''} ${company.contactNumber ? `(\`${company.contactNumber}\`)` : ''}\n`;
   }
 
   return text;
 }
 
 /**
- * Get fleet status (Workshop, On-Site, Total).
+ * Get fleet status in a clean table format.
  */
 export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
@@ -228,37 +254,61 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
   const notConfirmed = all.filter(f => f.locationType === 'Not Confirm');
 
   if (locationFilter === 'Workshop') {
-    let msg = `🏭 *Forklifts Currently in Workshop (${workshop.length}):*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+    let msg = `🏭 *WORKSHOP IDLE FORKLIFTS (${workshop.length})*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     if (workshop.length === 0) {
       msg += '_No forklifts currently idle in workshop._';
     } else {
-      workshop.forEach((f, i) => {
-        msg += `${i + 1}. *${f.serialNumber}* - ${f.make || ''} ${f.model || ''} (${f.capacity || 'N/A'})\n`;
+      msg += `\`\`\`text\n`;
+      msg += `┌──────────┬──────────────────┬──────────┐\n`;
+      msg += `│ Serial # │ Make / Model     │ Capacity │\n`;
+      msg += `├──────────┼──────────────────┼──────────┤\n`;
+      workshop.forEach(f => {
+        const makeModel = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(makeModel, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
       });
+      msg += `└──────────┴──────────────────┴──────────┘\n`;
+      msg += `\`\`\`\n`;
     }
     return msg;
   }
 
   if (locationFilter === 'On-Site') {
-    let msg = `📍 *Forklifts Deployed On-Site (${onSite.length}):*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+    let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS (${onSite.length})*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     if (onSite.length === 0) {
       msg += '_No forklifts currently deployed on-site._';
     } else {
-      onSite.forEach((f, i) => {
-        msg += `${i + 1}. *${f.serialNumber}* @ ${f.siteCompany || 'Client Site'} (${f.siteArea || 'On-Site'})\n`;
+      msg += `\`\`\`text\n`;
+      msg += `┌──────────┬──────────────────────┬──────────┐\n`;
+      msg += `│ Serial # │ Client / Site        │ Capacity │\n`;
+      msg += `├──────────┼──────────────────────┼──────────┤\n`;
+      onSite.forEach(f => {
+        const site = f.siteCompany || f.siteArea || 'Client Site';
+        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(site, 20)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
       });
+      msg += `└──────────┴──────────────────────┴──────────┘\n`;
+      msg += `\`\`\`\n`;
     }
     return msg;
   }
 
   const utilRate = all.length > 0 ? ((onSite.length / all.length) * 100).toFixed(0) : '0';
 
-  let msg = `🚜 *FLEET SUMMARY*\n━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `📊 *Total Fleet:* ${all.length} Units\n`;
-  msg += `🟢 *On-Site (Deployed):* ${onSite.length} Units\n`;
-  msg += `🟠 *Workshop (Idle):* ${workshop.length} Units\n`;
-  msg += `🔴 *Unconfirmed:* ${notConfirmed.length} Units\n`;
-  msg += `📈 *Fleet Utilization:* ${utilRate}%\n━━━━━━━━━━━━━━━━━━━━━\n`;
+  let msg = `🚜 *TOTAL FLEET SUMMARY*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌──────────────────────┬──────────────┐\n`;
+  msg += `│ CATEGORY             │ UNITS        │\n`;
+  msg += `├──────────────────────┼──────────────┤\n`;
+  msg += `│ Total Fleet          │ ${pad(all.length, 12, 'right')} │\n`;
+  msg += `│ On-Site (Deployed)   │ ${pad(onSite.length, 12, 'right')} │\n`;
+  msg += `│ Workshop (Idle)      │ ${pad(workshop.length, 12, 'right')} │\n`;
+  msg += `│ Unconfirmed          │ ${pad(notConfirmed.length, 12, 'right')} │\n`;
+  msg += `├──────────────────────┼──────────────┤\n`;
+  msg += `│ FLEET UTILIZATION    │ ${pad(utilRate + '%', 12, 'right')} │\n`;
+  msg += `└──────────────────────┴──────────────┘\n`;
+  msg += `\`\`\`\n`;
   msg += `_Type "workshop" or "onsite" for detailed list._`;
   return msg;
 }
@@ -283,21 +333,28 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
   const f = matched.data();
   let msg = `🚜 *FORKLIFT: ${f.serialNumber}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `🏭 *Make / Model:* ${f.make || ''} ${f.model || ''}\n`;
-  msg += `⚡ *Capacity:* ${f.capacity || 'N/A'}\n`;
-  msg += `🏢 *Firm:* ${f.firm || 'Vithal'}\n`;
-  msg += `📍 *Current Location:* *${f.locationType}*\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌─────────────┬──────────────────────────┐\n`;
+  msg += `│ Field       │ Value                    │\n`;
+  msg += `├─────────────┼──────────────────────────┤\n`;
+  msg += `│ Serial No   │ ${pad(f.serialNumber, 24)} │\n`;
+  msg += `│ Make/Model  │ ${pad((f.make || '') + ' ' + (f.model || ''), 24)} │\n`;
+  msg += `│ Capacity    │ ${pad(f.capacity || 'N/A', 24)} │\n`;
+  msg += `│ Firm        │ ${pad(f.firm || 'Vithal', 24)} │\n`;
+  msg += `│ Location    │ ${pad(f.locationType || 'N/A', 24)} │\n`;
   if (f.locationType === 'On-Site') {
-    msg += `🏢 *Client Site:* ${f.siteCompany || 'N/A'}\n`;
-    msg += `📍 *Site Area:* ${f.siteArea || 'N/A'}\n`;
-    if (f.siteContactPerson) msg += `👤 *Site Contact:* ${f.siteContactPerson} (${f.siteContactNumber || ''})\n`;
+    msg += `│ Client Site │ ${pad(f.siteCompany || 'N/A', 24)} │\n`;
+    msg += `│ Site Area   │ ${pad(f.siteArea || 'N/A', 24)} │\n`;
   }
+  msg += `└─────────────┴──────────────────────────┘\n`;
+  msg += `\`\`\`\n`;
+  if (f.siteContactPerson) msg += `👤 *Site Contact:* ${f.siteContactPerson} (${f.siteContactNumber || 'N/A'})\n`;
   if (f.remarks) msg += `📝 *Remarks:* ${f.remarks}\n`;
   return msg;
 }
 
 /**
- * Get today's attendance summary.
+ * Get today's attendance summary as a clean table.
  */
 export async function getTodayAttendanceSummary(): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
@@ -308,7 +365,7 @@ export async function getTodayAttendanceSummary(): Promise<string> {
 
   const empMap: Record<string, string> = {};
   empSnap.docs.forEach(d => {
-    empMap[d.id] = d.data().fullName || 'Unknown';
+    empMap[d.id] = d.data().fullName || 'Employee';
   });
 
   const records = attSnap.docs.map(d => d.data());
@@ -323,12 +380,20 @@ export async function getTodayAttendanceSummary(): Promise<string> {
     else if (r.status === 'Half-Day') halfDay.push(name);
   });
 
-  let msg = `📅 *ATTENDANCE TODAY (${today})*\n━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `👥 *Total Staff:* ${empSnap.size}\n`;
-  msg += `✅ *Present:* ${present.length}\n`;
-  msg += `❌ *Absent:* ${absent.length}\n`;
-  if (halfDay.length > 0) msg += `⏳ *Half-Day:* ${halfDay.length}\n`;
+  let msg = `📅 *ATTENDANCE TODAY (${today})*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌──────────────────────┬──────────────┐\n`;
+  msg += `│ ATTENDANCE METRIC    │ COUNT        │\n`;
+  msg += `├──────────────────────┼──────────────┤\n`;
+  msg += `│ Total Staff          │ ${pad(empSnap.size, 12, 'right')} │\n`;
+  msg += `│ Present Staff        │ ${pad(present.length, 12, 'right')} │\n`;
+  msg += `│ Absent Staff         │ ${pad(absent.length, 12, 'right')} │\n`;
+  if (halfDay.length > 0) {
+    msg += `│ Half-Day             │ ${pad(halfDay.length, 12, 'right')} │\n`;
+  }
+  msg += `└──────────────────────┴──────────────┘\n`;
+  msg += `\`\`\`\n`;
 
   if (absent.length > 0) {
     msg += `❌ *Absent Staff:*\n• ${absent.join('\n• ')}\n\n`;
@@ -341,7 +406,7 @@ export async function getTodayAttendanceSummary(): Promise<string> {
 }
 
 /**
- * Get current month billing summary for Vithal & RV Enterprises.
+ * Get current month billing summary as a table.
  */
 export async function getMonthlyBillingSummary(): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
@@ -372,16 +437,23 @@ export async function getMonthlyBillingSummary(): Promise<string> {
   const monthDate = new Date(currentMonth + '-01');
   const monthName = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-  let msg = `📊 *BILLING SUMMARY (${monthName.toUpperCase()})*\n━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `🏭 *Vithal Enterprises:* ₹${vithalTotal.toLocaleString('en-IN')} (${vithalCount} Invoices)\n`;
-  msg += `🏢 *R.V Enterprises:* ₹${rvTotal.toLocaleString('en-IN')} (${rvCount} Invoices)\n`;
+  let msg = `📊 *BILLING SUMMARY (${monthName.toUpperCase()})*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `💎 *TOTAL BILLING:* ₹${(vithalTotal + rvTotal).toLocaleString('en-IN')}\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌──────────────────────┬───────┬──────────────┐\n`;
+  msg += `│ Enterprise           │ Bills │ Amount (₹)   │\n`;
+  msg += `├──────────────────────┼───────┼──────────────┤\n`;
+  msg += `│ Vithal Enterprises   │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
+  msg += `│ R.V Enterprises      │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
+  msg += `├──────────────────────┼───────┼──────────────┤\n`;
+  msg += `│ TOTAL REVENUE        │ ${pad(vithalCount + rvCount, 5)} │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │\n`;
+  msg += `└──────────────────────┴───────┴──────────────┘\n`;
+  msg += `\`\`\`\n`;
   return msg;
 }
 
 /**
- * List all registered companies.
+ * List all registered companies formatted as a table.
  */
 export async function listAllCompanies(): Promise<string> {
   const firestore = await getAuthenticatedFirestore();
@@ -391,12 +463,22 @@ export async function listAllCompanies(): Promise<string> {
     return '🏢 *No companies registered in database.*';
   }
 
-  let msg = `🏢 *REGISTERED COMPANIES (${snap.size}):*\n━━━━━━━━━━━━━━━━━━━━━\n`;
-  snap.docs.forEach((d, i) => {
+  let msg = `🏢 *REGISTERED CLIENTS (${snap.size})*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `\`\`\`text\n`;
+  msg += `┌────┬──────────────────────────────────┐\n`;
+  msg += `│ #  │ Company Name                     │\n`;
+  msg += `├────┼──────────────────────────────────┤\n`;
+  snap.docs.slice(0, 30).forEach((d, i) => {
     const c = d.data();
-    msg += `${i + 1}. *${c.name}* ${c.contactNumber ? `(📞 ${c.contactNumber})` : ''}\n`;
+    msg += `│ ${pad(i + 1, 2)} │ ${pad(c.name || 'Company', 32)} │\n`;
   });
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n_Type any company name (e.g. Bisleri) to get pending balance._`;
+  msg += `└────┴──────────────────────────────────┘\n`;
+  msg += `\`\`\`\n`;
+  if (snap.size > 30) {
+    msg += `_...and ${snap.size - 30} more companies._\n`;
+  }
+  msg += `_Type any company name (e.g. Bisleri) to view outstanding balance._`;
   return msg;
 }
 
@@ -422,7 +504,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
       return await listAllCompanies();
     }
 
-    // ─── 2. WORKSHOP / IDLE FORKLIFTS (Checked BEFORE company search!) ──────
+    // ─── 2. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
     if (
       hasWord(lower, 'workshop') ||
       hasWord(lower, 'idle') ||
@@ -509,7 +591,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
         return await getCompanyPaymentSummary(companyFullName);
       }
 
-      // Check distinctive brand words (length >= 4 and not generic corporate stop words)
+      // Check distinctive brand words
       const stopWords = new Set([
         'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
         'llp', 'and', 'the', 'services', 'solutions', 'international',
