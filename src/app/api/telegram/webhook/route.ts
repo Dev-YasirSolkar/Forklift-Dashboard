@@ -10,6 +10,7 @@ import {
   getFleetStatus,
   getTodayAttendanceSummary,
   getMonthlyBillingSummary,
+  getAuthenticatedFirestore,
 } from '@/lib/telegram-assistant';
 
 export const dynamic = 'force-dynamic';
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
       const isSalaryRequest = lowerText.startsWith('/slip') || lowerText.startsWith('/slips') || (lowerText.includes('salary') && !lowerText.includes('total'));
       if (isSalaryRequest) {
         try {
-          const { firestore } = initializeFirebase();
+          const firestore = await getAuthenticatedFirestore();
           if (lowerText === '/slips' || lowerText === 'list' || lowerText === 'slips') {
             const empQuery = query(collection(firestore, 'employees'), where('telegramChatId', '==', chatId));
             const empSnap = await getDocs(empQuery);

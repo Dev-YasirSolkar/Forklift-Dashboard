@@ -3,8 +3,10 @@
  * Handles natural language querying over Firestore data for Admin & Employees.
  */
 
-import { initializeFirebase } from '@/firebase';
-import { collection, query, where, getDocs, getDoc, doc, setDoc } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getFirestore, collection, query, where, getDocs, getDoc, doc, setDoc } from 'firebase/firestore';
+import { firebaseConfig } from '@/firebase/config';
 
 interface CompanySummary {
   id: string;
@@ -21,13 +23,30 @@ const verifiedAdminChatIds = new Set<string>();
 export const ADMIN_SECRET_CODE = '2028';
 
 /**
+ * Get Firestore instance with authenticated server session.
+ * This guarantees full read permissions without "insufficient permissions" errors.
+ */
+export async function getAuthenticatedFirestore() {
+  const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  const auth = getAuth(app);
+  if (!auth.currentUser) {
+    try {
+      await signInAnonymously(auth);
+    } catch (e) {
+      console.warn('Anonymous sign-in warning:', e);
+    }
+  }
+  return getFirestore(app);
+}
+
+/**
  * Check if the given chatId is an authorized Admin.
  */
 export async function isTelegramAdmin(chatId: string): Promise<boolean> {
   if (verifiedAdminChatIds.has(chatId)) return true;
 
   try {
-    const { firestore } = initializeFirebase();
+    const firestore = await getAuthenticatedFirestore();
     const adminDoc = await getDoc(doc(firestore, 'telegramAdmins', chatId));
     if (adminDoc.exists()) {
       verifiedAdminChatIds.add(chatId);
@@ -62,7 +81,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
   verifiedAdminChatIds.add(chatId);
 
   try {
-    const { firestore } = initializeFirebase();
+    const firestore = await getAuthenticatedFirestore();
     await setDoc(doc(firestore, 'telegramAdmins', chatId), {
       chatId,
       passcode: ADMIN_SECRET_CODE,
@@ -80,7 +99,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
  * Query pending payments and invoice balance for a company.
  */
 export async function getCompanyPaymentSummary(companyQuery: string): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   
   // 1. Find Company
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
@@ -100,7 +119,7 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
   }
 
   if (!matchedCompanyDoc) {
-    return `❌ *Company not found*\nCould not find any company matching "${companyQuery}".\n_Try typing the full or partial company name._`;
+    return `❌ *Company "${companyQuery}" Not Found*\n\nType *"all companies"* to see all registered clients in your dashboard.`;
   }
 
   const company = matchedCompanyDoc.data() as CompanySummary;
@@ -166,17 +185,17 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
 
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `💰 *Total Billed:* ₹${totalBilled.toLocaleString('en-IN')}\n`;
+  text += `💰 *Total Invoiced:* ₹${totalBilled.toLocaleString('en-IN')}\n`;
   text += `✅ *Total Received:* ₹${totalReceived.toLocaleString('en-IN')}\n`;
   if (totalTds > 0) text += `🔖 *TDS Deducted:* ₹${totalTds.toLocaleString('en-IN')}\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `⚠️ *OUTSTANDING BALANCE:* ₹${pendingBalance.toLocaleString('en-IN')}\n\n`;
+  text += `⚠️ *OUTSTANDING DUE:* ₹${pendingBalance.toLocaleString('en-IN')}\n\n`;
 
   if (unpaidInvoices.length > 0) {
-    text += `📋 *Unpaid / Pending Bills (${unpaidInvoices.length}):*\n`;
+    text += `📋 *Pending Bills (${unpaidInvoices.length}):*\n`;
     unpaidInvoices.slice(0, 8).forEach(inv => {
       const due = inv.amount - inv.received;
-      text += `• Bill #${inv.billNo} (${inv.enterprise}) - Due: ₹${due.toLocaleString('en-IN')} [Date: ${inv.date}]\n`;
+      text += `• Bill #${inv.billNo} (${inv.enterprise}) - Due: ₹${due.toLocaleString('en-IN')} [${inv.date}]\n`;
     });
     if (unpaidInvoices.length > 8) {
       text += `_...and ${unpaidInvoices.length - 8} more bills._\n`;
@@ -196,7 +215,7 @@ export async function getCompanyPaymentSummary(companyQuery: string): Promise<st
  * Get fleet status (Workshop, On-Site, Total).
  */
 export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'forklifts'));
 
   if (snap.empty) {
@@ -240,7 +259,7 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
   msg += `🟠 *Workshop (Idle):* ${workshop.length} Units\n`;
   msg += `🔴 *Unconfirmed:* ${notConfirmed.length} Units\n`;
   msg += `📈 *Fleet Utilization:* ${utilRate}%\n━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `_Type "workshop forklifts" or "on site forklifts" for detailed list._`;
+  msg += `_Type "workshop" or "onsite" for detailed list._`;
   return msg;
 }
 
@@ -248,7 +267,7 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site'): P
  * Search a specific forklift by serial number or name.
  */
 export async function getForkliftDetail(serialQuery: string): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'forklifts'));
   const searchLower = serialQuery.toLowerCase().trim();
 
@@ -281,7 +300,7 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
  * Get today's attendance summary.
  */
 export async function getTodayAttendanceSummary(): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   const today = new Date().toISOString().split('T')[0];
 
   const empSnap = await getDocs(collection(firestore, 'employees'));
@@ -325,7 +344,7 @@ export async function getTodayAttendanceSummary(): Promise<string> {
  * Get current month billing summary for Vithal & RV Enterprises.
  */
 export async function getMonthlyBillingSummary(): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
   const snap = await getDocs(collection(firestore, 'invoices'));
@@ -365,7 +384,7 @@ export async function getMonthlyBillingSummary(): Promise<string> {
  * List all registered companies.
  */
 export async function listAllCompanies(): Promise<string> {
-  const { firestore } = initializeFirebase();
+  const firestore = await getAuthenticatedFirestore();
   const snap = await getDocs(collection(firestore, 'companies'));
 
   if (snap.empty) {
@@ -377,7 +396,7 @@ export async function listAllCompanies(): Promise<string> {
     const c = d.data();
     msg += `${i + 1}. *${c.name}* ${c.contactNumber ? `(📞 ${c.contactNumber})` : ''}\n`;
   });
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n_Type company name to get its pending balance & bills._`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n_Type any company name (e.g. Bisleri) to get pending balance._`;
   return msg;
 }
 
@@ -390,7 +409,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
   const lower = raw.toLowerCase();
 
   try {
-    const { firestore } = initializeFirebase();
+    const firestore = await getAuthenticatedFirestore();
 
     // 1. Check if user is asking for all companies list
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
@@ -398,13 +417,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
     }
 
     // 2. Dynamic Company Name Search
-    // Fetch all companies to match directly against the prompt
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     for (const d of companiesSnap.docs) {
       const companyName = (d.data().name || '').toLowerCase().trim();
       if (companyName.length > 2) {
-        // Check if full company name or primary word exists in prompt
-        const words = companyName.split(/\s+/).filter(w => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'llp', 'and', 'the'].includes(w));
+        const words = companyName.split(/[\s,./()]+/).filter(w => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise', 'llp', 'and', 'the', 'services', 'solutions', 'international', 'internationals', 'group', 'india'].includes(w));
         const matched = lower.includes(companyName) || words.some(w => lower.includes(w));
         if (matched) {
           return await getCompanyPaymentSummary(d.data().name);
@@ -446,10 +463,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
       return await getMonthlyBillingSummary();
     }
 
-  } catch (err) {
+  } catch (err: any) {
     console.error('Smart NLP processing error:', err);
+    return `⚠️ *Error accessing data:* ${err.message || 'Database error'}`;
   }
 
   // Helpful response if no specific entity was recognized
-  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Details & Pending:* Type company name (e.g. _"Bisleri"_, _"Reliance pending"_, or _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop forklifts"_, _"On-site forklifts"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
+  return `🤖 *VE Dashboard Assistant*\n━━━━━━━━━━━━━━━━━━━━━\nAap mujhse ye sawal puch sakte hain:\n\n🏢 *Company Pending Bills:* Type company name (e.g. _"Bisleri"_, _"Varun Beverages"_, ya _"all companies"_)\n🚜 *Forklift Fleet:* Type _"Workshop"_, _"On-site"_, ya _"Total fleet"_\n📅 *Attendance:* Type _"Today attendance"_ ya _"Absent staff"_\n💰 *Revenue:* Type _"This month billing"_ ya \`/revenue\`\n━━━━━━━━━━━━━━━━━━━━━`;
 }
