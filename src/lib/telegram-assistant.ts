@@ -363,6 +363,18 @@ export async function getCompanyDetailByIntent(
     };
   }
 
+  // Sort invoices chronologically by Date, then by Bill Number
+  filteredInvoices.sort((a, b) => {
+    const timeA = a.date ? new Date(a.date).getTime() : 0;
+    const timeB = b.date ? new Date(b.date).getTime() : 0;
+    if (timeA && timeB && timeA !== timeB) {
+      return timeA - timeB;
+    }
+    const billA = parseInt(String(a.billNo), 10) || 0;
+    const billB = parseInt(String(b.billNo), 10) || 0;
+    return billA - billB;
+  });
+
   const unpaidInvoices = filteredInvoices.filter(inv => (inv.amount - inv.received) > 1);
 
   const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
@@ -384,15 +396,15 @@ export async function getCompanyDetailByIntent(
     text += `🏢 Scope: *${firmHeader}* (${filteredInvoices.length} Bills)\n`;
     text += `━━━━━━━━━━━━━━━━━━━━━\n`;
     text += `\`\`\`text\n`;
-    text += `┌─────────┬────────┬──────────────┬─────────────┐\n`;
-    text += `│ Bill #  │ Firm   │ Total (₹)    │ Status      │\n`;
-    text += `├─────────┼────────┼──────────────┼─────────────┤\n`;
-    filteredInvoices.forEach(inv => {
+    text += `┌────┬─────────┬────────┬──────────────┬────────────┬─────────────┐\n`;
+    text += `│ #  │ Bill #  │ Firm   │ Total (₹)    │ Date       │ Status      │\n`;
+    text += `├────┼─────────┼────────┼──────────────┼────────────┼─────────────┤\n`;
+    filteredInvoices.forEach((inv, index) => {
       const due = inv.amount - inv.received;
       const status = due <= 1 ? 'PAID' : `DUE ₹${formatInr(due)}`;
-      text += `│ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(status, 11)} │\n`;
+      text += `│ ${pad(index + 1, 2)} │ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │ ${pad(status, 11)} │\n`;
     });
-    text += `└─────────┴────────┴──────────────┴─────────────┘\n`;
+    text += `└────┴─────────┴────────┴──────────────┴────────────┴─────────────┘\n`;
     text += `\`\`\`\n`;
 
     return {
@@ -439,18 +451,18 @@ export async function getCompanyDetailByIntent(
     text += `\`\`\`\n`;
   }
 
-  // Complete List of Unpaid Bills (Strictly Distinct)
+  // Complete List of Unpaid Bills (Strictly Distinct with Sr No & Date Sorted)
   if (unpaidInvoices.length > 0) {
     text += `📋 *Unpaid Bills (${unpaidInvoices.length}):*\n`;
     text += `\`\`\`text\n`;
-    text += `┌─────────┬────────┬──────────────┬────────────┐\n`;
-    text += `│ Bill #  │ Firm   │ Due (₹)      │ Date       │\n`;
-    text += `├─────────┼────────┼──────────────┼────────────┤\n`;
-    unpaidInvoices.forEach(inv => {
+    text += `┌────┬─────────┬────────┬──────────────┬────────────┐\n`;
+    text += `│ #  │ Bill #  │ Firm   │ Due (₹)      │ Date       │\n`;
+    text += `├────┼─────────┼────────┼──────────────┼────────────┤\n`;
+    unpaidInvoices.forEach((inv, index) => {
       const due = inv.amount - inv.received;
-      text += `│ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
+      text += `│ ${pad(index + 1, 2)} │ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
     });
-    text += `└─────────┴────────┴──────────────┴────────────┘\n`;
+    text += `└────┴─────────┴────────┴──────────────┴────────────┘\n`;
     text += `\`\`\`\n`;
   } else {
     text += `✨ *All bills for ${firmHeader} are fully settled!* 🎉\n`;
