@@ -12,6 +12,9 @@ import {
   getMonthlyBillingSummary,
 } from '@/lib/telegram-assistant';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
 /**
  * @fileOverview Telegram Webhook Handler
  * Supports Admin business queries (Natural Language / Free-form) and Employee Salary Slips.
@@ -41,6 +44,7 @@ export async function POST(req: Request) {
 
   try {
     const data = await req.json();
+    console.log('[Telegram Webhook Payload]:', JSON.stringify(data));
     const message = data.message || data.edited_message;
 
     if (message && message.text && message.chat) {
@@ -48,47 +52,34 @@ export async function POST(req: Request) {
       const lowerText = rawText.toLowerCase();
       const chatId = message.chat.id.toString();
       const firstName = message.from?.first_name || 'User';
-      
-      const { firestore } = initializeFirebase();
-      const isAdmin = await isTelegramAdmin(chatId);
 
-      // ─── 1. ADMIN REGISTRATION / PASSCODE COMMAND (/2028 or /admin) ───
+      // ─── 1. DIRECT PASSCODE / ADMIN UNLOCK (/2028 or 2028) ───────────────
       const isSecretCode = lowerText === '/2028' || lowerText === '2028' || lowerText.includes('2028');
       const isAdminCommand = lowerText.startsWith('/admin') || lowerText.startsWith('admin') || lowerText.startsWith('/login');
 
       if (isSecretCode || isAdminCommand) {
         const parts = rawText.split(/\s+/);
-        const secretOrEmail = isSecretCode ? '2028' : parts.find((p: string) => p.includes('2028') || p.includes('@'));
+        const secretOrEmail = isSecretCode ? '2028' : (parts.find((p: string) => p.includes('2028') || p.includes('@')) || '2028');
 
-        if (secretOrEmail) {
-          const success = await registerTelegramAdmin(chatId, secretOrEmail);
-          if (success) {
-            await sendTelegramMessage(
-              token,
-              chatId,
-              `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *ADMIN ACCESS GRANTED!* 👑\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 🙏 Welcome to your **24/7 VE Dashboard Assistant**.\n\nAap simple Hindi / English mein koi bhi business query puch sakte hain:\n\n💬 *Try asking:*\n• 🏢 _"Bisleri ka pending payment kitna hai?"_\n• 🚜 _"Workshop me kitne forklifts hain?"_\n• 📅 _"Aaj attendance me kon absent hai?"_\n• 💰 _"Is mahine ka total billing batao"_\n\n⚡ *Quick Commands:*\n• 🚜 \`/fleet\` ➔ Fleet summary\n• 📅 \`/attendance\` ➔ Today's attendance\n• 💰 \`/revenue\` ➔ Monthly billing\n• 🔍 \`/pending <Company>\` ➔ Due bills\n━━━━━━━━━━━━━━━━━━━━━━`
-            );
-            return NextResponse.json({ ok: true });
-          } else {
-            await sendTelegramMessage(token, chatId, `❌ *Invalid Passcode or Email.* Use \`/2028\` to unlock Admin access.`);
-            return NextResponse.json({ ok: true });
-          }
+        const success = await registerTelegramAdmin(chatId, secretOrEmail);
+        if (success) {
+          await sendTelegramMessage(
+            token,
+            chatId,
+            `✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n👑 *ADMIN ACCESS GRANTED!* 👑\n🏭 *Vithal & R.V Enterprises*\n✨ ━━━━━━━━━━━━━━━━━━━━━━ ✨\n\nNamaste *${firstName}*! 🙏 Welcome to your **24/7 VE Dashboard Assistant**.\n\nAap simple Hindi / English mein koi bhi business query puch sakte hain:\n\n💬 *Try asking:*\n• 🏢 _"Bisleri ka pending payment kitna hai?"_\n• 🚜 _"Workshop me kitne forklifts hain?"_\n• 📅 _"Aaj attendance me kon absent hai?"_\n• 💰 _"Is mahine ka total billing batao"_\n\n⚡ *Quick Commands:*\n• 🚜 \`/fleet\` ➔ Fleet summary\n• 📅 \`/attendance\` ➔ Today's attendance\n• 💰 \`/revenue\` ➔ Monthly billing\n• 🔍 \`/pending <Company>\` ➔ Due bills\n━━━━━━━━━━━━━━━━━━━━━━`
+          );
         } else {
-          if (isAdmin) {
-            await sendTelegramMessage(
-              token,
-              chatId,
-              `👑 *Admin Mode Active!*\n━━━━━━━━━━━━━━━━━━━━━\nAsk me anything about your companies, fleet, billing or attendance.\n\n*Quick Commands:*\n• \`/fleet\` - Forklift overview\n• \`/attendance\` - Today's attendance\n• \`/revenue\` - Monthly billing summary\n• \`/pending <Company>\` - Outstanding bills`
-            );
-          } else {
-            await sendTelegramMessage(
-              token,
-              chatId,
-              `🔒 *Admin Verification Required*\n━━━━━━━━━━━━━━━━━━━━━\nTo activate Admin features, type:\n\`/2028\`\n\nYour Chat ID: \`${chatId}\``
-            );
-          }
-          return NextResponse.json({ ok: true });
+          await sendTelegramMessage(token, chatId, `🔒 To unlock Admin access, simply type:\n👉 \`/2028\``);
         }
+        return NextResponse.json({ ok: true });
+      }
+
+      // Check admin status safely
+      let isAdmin = false;
+      try {
+        isAdmin = await isTelegramAdmin(chatId);
+      } catch (err) {
+        console.error('Error checking admin status:', err);
       }
 
       // ─── 2. START / HELP COMMAND (CUSTOM WELCOME MESSAGE) ─────────────────
@@ -138,131 +129,135 @@ export async function POST(req: Request) {
       // ─── 4. TECHNICIAN SALARY SLIPS COMMANDS ─────────────────────────────
       const isSalaryRequest = lowerText.startsWith('/slip') || lowerText.startsWith('/slips') || (lowerText.includes('salary') && !lowerText.includes('total'));
       if (isSalaryRequest) {
-        if (lowerText === '/slips' || lowerText === 'list' || lowerText === 'slips') {
+        try {
+          const { firestore } = initializeFirebase();
+          if (lowerText === '/slips' || lowerText === 'list' || lowerText === 'slips') {
+            const empQuery = query(collection(firestore, 'employees'), where('telegramChatId', '==', chatId));
+            const empSnap = await getDocs(empQuery);
+
+            if (empSnap.empty) {
+              await sendTelegramMessage(token, chatId, "❌ *Chat ID not linked.*\nPlease contact HR with your ID: `" + chatId + "` to link your account.");
+            } else {
+              const employeeId = empSnap.docs[0].id;
+              const salaryQuery = query(
+                collection(firestore, 'salaries'), 
+                where('employeeId', '==', employeeId),
+                orderBy('month', 'desc'),
+                limit(12)
+              );
+              const salarySnap = await getDocs(salaryQuery);
+
+              if (salarySnap.empty) {
+                await sendTelegramMessage(token, chatId, "🔍 No salary records found for your account in our database.");
+              } else {
+                let list = `📄 *Available Salary Slips:*\n━━━━━━━━━━━━━━━━━━\n`;
+                salarySnap.docs.forEach(d => {
+                  const s = d.data();
+                  const date = new Date(s.month + "-01");
+                  const label = date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+                  list += `• ${label} (Type \`/slip ${date.toLocaleString('en-US', { month: 'short' })}\`)\n`;
+                });
+                list += `━━━━━━━━━━━━━━━━━━\n_Reply with the month name to get the PDF._`;
+                await sendTelegramMessage(token, chatId, list);
+              }
+            }
+            return NextResponse.json({ ok: true });
+          }
+
+          // Send Salary Slip PDF
           const empQuery = query(collection(firestore, 'employees'), where('telegramChatId', '==', chatId));
           const empSnap = await getDocs(empQuery);
 
-          if (empSnap.empty) {
-            await sendTelegramMessage(token, chatId, "❌ *Chat ID not linked.*\nPlease contact HR with your ID: `" + chatId + "` to link your account.");
-          } else {
+          if (empSnap.empty && !isAdmin) {
+            await sendTelegramMessage(token, chatId, "❌ *Unauthorized Access.*\nYour Chat ID (`" + chatId + "`) is not linked to any technician profile.");
+            return NextResponse.json({ ok: true });
+          }
+
+          if (!empSnap.empty) {
+            const employee = empSnap.docs[0].data();
             const employeeId = empSnap.docs[0].id;
-            const salaryQuery = query(
-              collection(firestore, 'salaries'), 
-              where('employeeId', '==', employeeId),
-              orderBy('month', 'desc'),
-              limit(12)
-            );
-            const salarySnap = await getDocs(salaryQuery);
 
-            if (salarySnap.empty) {
-              await sendTelegramMessage(token, chatId, "🔍 No salary records found for your account in our database.");
-            } else {
-              let list = `📄 *Available Salary Slips:*\n━━━━━━━━━━━━━━━━━━\n`;
-              salarySnap.docs.forEach(d => {
-                const s = d.data();
-                const date = new Date(s.month + "-01");
-                const label = date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-                list += `• ${label} (Type \`/slip ${date.toLocaleString('en-US', { month: 'short' })}\`)\n`;
-              });
-              list += `━━━━━━━━━━━━━━━━━━\n_Reply with the month name to get the PDF._`;
-              await sendTelegramMessage(token, chatId, list);
+            let targetMonth = "";
+            const parts = lowerText.split(/\s+/);
+            const monthArg = parts.length > 1 ? parts[1] : "";
+
+            if (monthMap[monthArg]) {
+              targetMonth = monthMap[monthArg];
+            } else if (/^\d{1,2}$/.test(monthArg)) {
+              targetMonth = monthArg.padStart(2, '0');
             }
-          }
-          return NextResponse.json({ ok: true });
-        }
 
-        // Send Salary Slip PDF
-        const empQuery = query(collection(firestore, 'employees'), where('telegramChatId', '==', chatId));
-        const empSnap = await getDocs(empQuery);
+            let salaryQuery;
+            if (targetMonth) {
+              const currentYear = new Date().getFullYear();
+              salaryQuery = query(
+                collection(firestore, 'salaries'), 
+                where('employeeId', '==', employeeId),
+                where('month', '>=', `${currentYear - 1}-01`),
+                orderBy('month', 'desc')
+              );
+            } else {
+              salaryQuery = query(
+                collection(firestore, 'salaries'), 
+                where('employeeId', '==', employeeId),
+                orderBy('month', 'desc'),
+                limit(1)
+              );
+            }
 
-        if (empSnap.empty && !isAdmin) {
-          await sendTelegramMessage(token, chatId, "❌ *Unauthorized Access.*\nYour Chat ID (`" + chatId + "`) is not linked to any technician profile.");
-          return NextResponse.json({ ok: true });
-        }
+            const salarySnap = await getDocs(salaryQuery);
+            let salaryDoc = null;
 
-        if (!empSnap.empty) {
-          const employee = empSnap.docs[0].data();
-          const employeeId = empSnap.docs[0].id;
+            if (targetMonth) {
+              salaryDoc = salarySnap.docs.find(d => d.data().month.endsWith("-" + targetMonth));
+            } else {
+              salaryDoc = salarySnap.docs[0];
+            }
 
-          let targetMonth = "";
-          const parts = lowerText.split(/\s+/);
-          const monthArg = parts.length > 1 ? parts[1] : "";
+            if (!salaryDoc) {
+              const errorMsg = targetMonth 
+                ? `❌ Sorry, no slip found for the month code: ${targetMonth}.`
+                : `❌ Sorry, no salary records found for your account.`;
+              await sendTelegramMessage(token, chatId, `${errorMsg}\nType */slips* to see available records.`);
+            } else {
+              const salary = salaryDoc.data();
+              const monthDate = new Date(salary.month + "-01");
+              const monthName = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-          if (monthMap[monthArg]) {
-            targetMonth = monthMap[monthArg];
-          } else if (/^\d{1,2}$/.test(monthArg)) {
-            targetMonth = monthArg.padStart(2, '0');
-          }
+              const summary = `📄 *Salary Summary: ${monthName}*\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `👤 *Name:* ${employee.fullName}\n` +
+                `💰 *NET PAYABLE:* ₹${salary.netSalary.toLocaleString('en-IN')}\n` +
+                `🏁 *Status:* ${salary.status === 'Paid' ? '✅ PAID' : '⏳ PENDING'}\n\n` +
+                `_Generating your official PDF slip..._ ⏳`;
 
-          let salaryQuery;
-          if (targetMonth) {
-            const currentYear = new Date().getFullYear();
-            salaryQuery = query(
-              collection(firestore, 'salaries'), 
-              where('employeeId', '==', employeeId),
-              where('month', '>=', `${currentYear - 1}-01`),
-              orderBy('month', 'desc')
-            );
-          } else {
-            salaryQuery = query(
-              collection(firestore, 'salaries'), 
-              where('employeeId', '==', employeeId),
-              orderBy('month', 'desc'),
-              limit(1)
-            );
-          }
+              await sendTelegramMessage(token, chatId, summary);
 
-          const salarySnap = await getDocs(salaryQuery);
-          let salaryDoc = null;
+              const settingsId = salary.enterprise.toLowerCase();
+              const settingsSnap = await getDoc(doc(firestore, 'companySettings', settingsId));
+              const settings = settingsSnap.data();
 
-          if (targetMonth) {
-            salaryDoc = salarySnap.docs.find(d => d.data().month.endsWith("-" + targetMonth));
-          } else {
-            salaryDoc = salarySnap.docs[0];
-          }
-
-          if (!salaryDoc) {
-            const errorMsg = targetMonth 
-              ? `❌ Sorry, no slip found for the month code: ${targetMonth}.`
-              : `❌ Sorry, no salary records found for your account.`;
-            await sendTelegramMessage(token, chatId, `${errorMsg}\nType */slips* to see available records.`);
-          } else {
-            const salary = salaryDoc.data();
-            const monthDate = new Date(salary.month + "-01");
-            const monthName = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-
-            const summary = `📄 *Salary Summary: ${monthName}*\n` +
-              `━━━━━━━━━━━━━━━━━━\n` +
-              `👤 *Name:* ${employee.fullName}\n` +
-              `💰 *NET PAYABLE:* ₹${salary.netSalary.toLocaleString('en-IN')}\n` +
-              `🏁 *Status:* ${salary.status === 'Paid' ? '✅ PAID' : '⏳ PENDING'}\n\n` +
-              `_Generating your official PDF slip..._ ⏳`;
-
-            await sendTelegramMessage(token, chatId, summary);
-
-            const settingsId = salary.enterprise.toLowerCase();
-            const settingsSnap = await getDoc(doc(firestore, 'companySettings', settingsId));
-            const settings = settingsSnap.data();
-
-            if (settings) {
-              try {
-                const pdfDoc = await generateSalaryPdfData(salary as any, employee as any, settings as any);
-                const pdfBase64 = pdfDoc.output('datauristring');
-                const fileName = `Salary_Slip_${salary.month}_${employee.fullName.replace(/\s+/g, '_')}.pdf`;
-                await sendTelegramPDF(token, chatId, pdfBase64, fileName);
-              } catch (pdfErr) {
-                console.error("PDF Bot Error:", pdfErr);
-                await sendTelegramMessage(token, chatId, "_Oops! Something went wrong while generating your PDF. Please contact the office._");
+              if (settings) {
+                try {
+                  const pdfDoc = await generateSalaryPdfData(salary as any, employee as any, settings as any);
+                  const pdfBase64 = pdfDoc.output('datauristring');
+                  const fileName = `Salary_Slip_${salary.month}_${employee.fullName.replace(/\s+/g, '_')}.pdf`;
+                  await sendTelegramPDF(token, chatId, pdfBase64, fileName);
+                } catch (pdfErr) {
+                  console.error("PDF Bot Error:", pdfErr);
+                  await sendTelegramMessage(token, chatId, "_Oops! Something went wrong while generating your PDF. Please contact the office._");
+                }
               }
             }
+            return NextResponse.json({ ok: true });
           }
-          return NextResponse.json({ ok: true });
+        } catch (dbErr) {
+          console.error("Salary Query DB Error:", dbErr);
         }
       }
 
       // ─── 5. ADMIN NATURAL LANGUAGE QUERY (AI POWERED) ────────────────────
       if (isAdmin) {
-        // Send a quick typing indicator or process response
         const answer = await processAdminNaturalLanguageQuery(rawText);
         await sendTelegramMessage(token, chatId, answer);
         return NextResponse.json({ ok: true });
@@ -272,7 +267,7 @@ export async function POST(req: Request) {
       await sendTelegramMessage(
         token,
         chatId,
-        `👋 Hello! Your Chat ID is \`${chatId}\`.\n\n• If you are a technician, ask HR to add this Chat ID to your profile.\n• If you are Admin, type \`/admin <Super Admin Email>\` to access business reports.`
+        `👋 Hello! Your Chat ID is \`${chatId}\`.\n\n• If you are a technician, ask HR to add this Chat ID to your profile.\n• If you are Admin, type \`/2028\` to access business reports.`
       );
     }
 
@@ -296,8 +291,8 @@ async function sendTelegramMessage(token: string, chatId: string, text: string) 
     });
     const result = await res.json();
     
-    // If Markdown parsing fails (e.g. unescaped symbols), retry in plain text so message is NEVER lost
-    if (!result.ok && result.description?.includes('can\'t parse entities')) {
+    // If Markdown parsing fails, retry in plain text so message is NEVER lost
+    if (!result.ok) {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
