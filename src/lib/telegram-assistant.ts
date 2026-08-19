@@ -30,6 +30,7 @@ const verifiedAdminChatIds = new Set<string>();
 const userActiveFirmMap = new Map<string, EnterpriseType>();
 const chatRecentChoices = new Map<string, string[]>();
 const awaitingFirmSelection = new Set<string>();
+let cachedGeminiKey: string | null = null;
 
 export const ADMIN_SECRET_CODE = '2028';
 
@@ -333,6 +334,55 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
   }
 
   return true;
+}
+
+/**
+ * Save Gemini API Key directly to Firestore.
+ */
+export async function saveGeminiApiKey(apiKey: string): Promise<boolean> {
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    cachedGeminiKey = apiKey.trim();
+    await setDoc(doc(firestore, 'companySettings', 'telegram'), {
+      geminiApiKey: cachedGeminiKey,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Error saving Gemini API key:', err);
+    return false;
+  }
+}
+
+/**
+ * Fetch Gemini API Key from environment or Firestore.
+ */
+export async function getGeminiApiKey(): Promise<string | null> {
+  if (cachedGeminiKey) return cachedGeminiKey;
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
+  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    const [telegramSnap, aiSnap] = await Promise.all([
+      getDoc(doc(firestore, 'companySettings', 'telegram')),
+      getDoc(doc(firestore, 'companySettings', 'ai'))
+    ]);
+
+    if (telegramSnap.exists() && telegramSnap.data()?.geminiApiKey) {
+      cachedGeminiKey = telegramSnap.data().geminiApiKey;
+      return cachedGeminiKey;
+    }
+    if (aiSnap.exists() && aiSnap.data()?.geminiApiKey) {
+      cachedGeminiKey = aiSnap.data().geminiApiKey;
+      return cachedGeminiKey;
+    }
+  } catch (err) {
+    console.error('Error reading Gemini API key from Firestore:', err);
+  }
+
+  return null;
 }
 
 /**
@@ -1191,32 +1241,6 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
 }
 
 /**
- * Fetch Gemini API Key from environment or Firestore.
- */
-async function getGeminiApiKey(): Promise<string | null> {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
-
-  try {
-    const firestore = await getAuthenticatedFirestore();
-    const [telegramSnap, aiSnap] = await Promise.all([
-      getDoc(doc(firestore, 'companySettings', 'telegram')),
-      getDoc(doc(firestore, 'companySettings', 'ai'))
-    ]);
-
-    if (telegramSnap.exists() && telegramSnap.data()?.geminiApiKey) {
-      return telegramSnap.data().geminiApiKey;
-    }
-    if (aiSnap.exists() && aiSnap.data()?.geminiApiKey) {
-      return aiSnap.data().geminiApiKey;
-    }
-  } catch (err) {
-    console.error('Error reading Gemini API key from Firestore:', err);
-  }
-
-  return null;
-}
-
-/**
  * Build rich live business context from Firestore for Gemini reasoning.
  */
 async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<string> {
@@ -1271,8 +1295,8 @@ async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<str
     });
 
     const topDebtors = Array.from(compDueMap.entries())
-      .map(([name, data]) => `${name}: Billed ₹${formatInr(data.billed)}, Received ₹${formatInr(data.received)}, Pending Due ₹${formatInr(data.due)} (${data.billsCount} bills)`)
-      .slice(0, 20)
+      .map(([name, data]) => `${name}: Total Billed ₹${formatInr(data.billed)}, Received ₹${formatInr(data.received)}, Net Due Pending ₹${formatInr(data.due)} (${data.billsCount} bills)`)
+      .slice(0, 30)
       .join('\n');
 
     // Forklifts
@@ -1294,8 +1318,8 @@ async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<str
     });
 
     return `
-=== REAL-TIME ENTERPRISE FACTS ===
-Active Firm Scope: ${activeFirm === 'Both' ? 'Both Vithal & R.V Enterprises' : activeFirm}
+=== REAL-TIME LIVE ENTERPRISE FACTS ===
+Active Firm Scope: ${activeFirm === 'Both' ? 'Both Vithal Enterprises & R.V Enterprises' : activeFirm}
 Today's Date: ${today} (${formatDateReadable(today)})
 Current Billing Month: ${currentMonth}
 
@@ -1309,7 +1333,7 @@ Total Staff: ${employeesSnap.size}
 Present (${presentStaff.length}): ${presentStaff.join(', ') || 'None marked'}
 Absent (${absentStaff.length}): ${absentStaff.join(', ') || 'None marked'}
 
---- CLIENT BALANCES & REVENUE (Top Clients) ---
+--- CLIENTS DUE & REVENUE (Live Database Snapshot) ---
 ${topDebtors}
 ===================================
 `;
@@ -1330,16 +1354,18 @@ async function queryGeminiAI(userPrompt: string, activeFirm: EnterpriseType): Pr
     const liveContext = await buildLiveBusinessContext(activeFirm);
 
     const systemInstruction = `
-You are the official AI Business Assistant for "Vithal Enterprises" and "R.V Enterprises" (Industrial Forklift Rental & Services, Maharashtra, India).
-The user is the Business Owner / Admin.
+You are the intelligent AI Executive Assistant for "Vithal Enterprises" and "R.V Enterprises" (Forklift Rentals, Fleet & Maintenance, Maharashtra).
+The user speaking to you is the Business Owner / Admin.
 
-RULES:
-1. Speak in clean, professional Hinglish / Hindi / English (matching the user's conversation style).
-2. Ground all answers strictly in the provided REAL-TIME ENTERPRISE FACTS.
-3. NEVER make up fake numbers or invoices.
-4. Format all responses with clean, readable mobile bullet points, bold numbers, and emojis (🏢, 💰, 🚜, 📅, ⚠️, ✅, ⏳).
-5. Format currency as "₹ X,XX,XXX".
-6. Keep answers concise, clear, and direct.
+YOUR MISSION:
+- Understand natural Hindi, Hinglish, or English conversations.
+- Answer accurately based ONLY on the REAL-TIME LIVE ENTERPRISE FACTS provided below.
+- If user asks for pending dues/balance of a company (e.g. "Bisleri ka kitna paisa baki hai total"), state the exact Net Pending Due, Total Billed, and Received amount clearly.
+- If user asks for fleet/forklifts/workshop, state the forklift status.
+- If user asks for attendance, state present/absent staff.
+- Always use clean bullet points, bold numbers, and emojis (🏢, 💰, 🚜, 📅, ⚠️, ✅, ⏳).
+- Format all currency in Indian format like "₹ X,XX,XXX".
+- Keep responses polite, professional, and directly to the point.
 `;
 
     const requestBody = {
@@ -1379,7 +1405,7 @@ RULES:
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Combines Deterministic Accuracy + Google Gemini AI for Conversational Mastery.
+ * Combines Google Gemini AI with Deterministic Engine for Complete Accuracy.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
@@ -1389,10 +1415,21 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     const firestore = await getAuthenticatedFirestore();
     const activeFirm = await getUserActiveFirm(chatId);
 
-    // Extract target month (e.g., "aug bills", "last month billing", "previous month", etc.)
-    const targetMonth = extractTargetMonth(raw);
+    // ─── 0. CHECK IF USER WANTS TO SET GEMINI API KEY ───────────────────────
+    if (lower.startsWith('/key ') || lower.startsWith('/gemini ') || lower.startsWith('set key ')) {
+      const key = raw.replace(/^(\/key|\/gemini|set key)\s+/i, '').trim();
+      if (key.length > 10) {
+        const saved = await saveGeminiApiKey(key);
+        if (saved) {
+          return {
+            text: `✨ *Gemini AI API Key Successfully Saved!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\nAb se bot me **Google Gemini AI** fully active hai! Aap kisi bhi natural language (Hindi/Hinglish/English) me sawaal pooch sakte hain.`,
+            buttons: renderFirmRadioButtons(activeFirm),
+          };
+        }
+      }
+    }
 
-    // ─── 0. FIRM SELECTION / SWITCHING COMMANDS ────────────────────────────
+    // ─── 1. FIRM SELECTION / SWITCHING COMMANDS ────────────────────────────
     if (
       lower === '/firm' || lower === 'firm' || lower === '/switch' || 
       lower === 'switch' || lower === 'change firm' || lower === 'select firm'
@@ -1412,18 +1449,18 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await setUserActiveFirm(chatId, 'Both');
     }
 
-    // ─── 1. CHECK IF USER REPLIED TO A RECENT MULTI-CHOICE SELECTION ────────
+    // ─── 2. CHECK IF USER REPLIED TO A RECENT MULTI-CHOICE SELECTION ────────
     if (/^\d{1,2}$/.test(raw) && chatId && chatRecentChoices.has(chatId)) {
       const choices = chatRecentChoices.get(chatId) || [];
       const index = parseInt(raw, 10) - 1;
       if (index >= 0 && index < choices.length) {
         const selectedCompany = choices[index];
         chatRecentChoices.delete(chatId);
-        return await getCompanyDetailByIntent(selectedCompany, 'all', activeFirm, targetMonth);
+        return await getCompanyDetailByIntent(selectedCompany, 'all', activeFirm, null);
       }
     }
 
-    // ─── 2. TOP OUTSTANDING DUE / DEBTORS LIST ─────────────────────────────
+    // ─── 3. TOP OUTSTANDING DUE / DEBTORS LIST ─────────────────────────────
     if (
       lower.includes('top pending') ||
       lower.includes('pending list') ||
@@ -1441,12 +1478,23 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getTopPendingBalances(activeFirm);
     }
 
-    // ─── 3. ALL COMPANIES LIST ─────────────────────────────────────────────
+    // ─── 4. ALL COMPANIES LIST ─────────────────────────────────────────────
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
       return await listAllCompanies();
     }
 
-    // ─── 4. WORKSHOP / IDLE FORKLIFTS ──────────────────────────────────────
+    // ─── 5. TRY GEMINI AI FOR CONVERSATIONAL CHAT ──────────────────────────
+    const aiAnswer = await queryGeminiAI(raw, activeFirm);
+    if (aiAnswer) {
+      return {
+        text: aiAnswer,
+        buttons: renderFirmRadioButtons(activeFirm),
+      };
+    }
+
+    // ─── 6. DETERMINISTIC FALLBACK PROCESSING ──────────────────────────────
+    const targetMonth = extractTargetMonth(raw);
+
     if (
       hasWord(lower, 'workshop') ||
       hasWord(lower, 'idle') ||
@@ -1461,7 +1509,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getFleetStatus('Workshop', activeFirm);
     }
 
-    // ─── 5. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
     if (
       hasWord(lower, 'onsite') ||
       hasWord(lower, 'on-site') ||
@@ -1474,7 +1521,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getFleetStatus('On-Site', activeFirm);
     }
 
-    // ─── 6. OVERALL FLEET SUMMARY ──────────────────────────────────────────
     if (
       hasWord(lower, 'fleet') ||
       hasWord(lower, 'forklift') ||
@@ -1489,7 +1535,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getFleetStatus(undefined, activeFirm);
     }
 
-    // ─── 7. ATTENDANCE & STAFF ─────────────────────────────────────────────
     if (
       hasWord(lower, 'attendance') ||
       hasWord(lower, 'absent') ||
@@ -1506,7 +1551,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getTodayAttendanceSummary();
     }
 
-    // ─── 8. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
     const isBillingRequest = (
       hasWord(lower, 'billing') ||
       hasWord(lower, 'revenue') ||
@@ -1530,7 +1574,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 9. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
+    // Forklift specific serial search
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
     for (const d of forkliftsSnap.docs) {
       const sn = String(d.data().serialNumber || '').trim();
@@ -1539,7 +1583,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 10. DYNAMIC & FUZZY COMPANY NAME SEARCH ───────────────────────────
+    // Company specific search
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
@@ -1628,16 +1672,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     if (matchedCompanies.length > 1) {
       const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai|last|previous|month|aug|july|june|kiska|kitna)\b/gi, '').trim() || raw;
       return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
-    }
-
-    // ─── 11. GEMINI AI NATURAL CONVERSATIONAL ENGINE ───────────────────────
-    // If no direct rule matched, let Gemini AI reason over live Firestore business facts!
-    const aiResponse = await queryGeminiAI(raw, activeFirm);
-    if (aiResponse) {
-      return {
-        text: aiResponse,
-        buttons: renderFirmRadioButtons(activeFirm),
-      };
     }
 
   } catch (err: any) {
