@@ -1,7 +1,7 @@
 /**
- * @fileOverview Super Smart Telegram Assistant Engine
- * Enterprise-grade natural language processing, fuzzy company matching,
- * top debtor rankings, bullet-point financial cards, and firm isolation.
+ * @fileOverview Super Smart AI-Powered Telegram Assistant Engine
+ * Integrates Google Gemini AI with live Firestore business data for deep natural language understanding (Hinglish/Hindi/English).
+ * Includes automatic context injection, fuzzy brand matching, Top Debtors ranking, and standard mobile card formatting.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -175,7 +175,7 @@ export async function getAuthenticatedFirestore() {
 }
 
 /**
- * Check if the given chatId is an authorized Admin (Permanent Persistence).
+ * Check if the given chatId is an authorized Admin.
  */
 export async function isTelegramAdmin(chatId: string): Promise<boolean> {
   if (verifiedAdminChatIds.has(chatId)) return true;
@@ -307,7 +307,7 @@ export async function renderFirmSelectionMenu(chatId: string): Promise<Assistant
 }
 
 /**
- * Register a chatId as Admin (Permanent Lifetime Persistence).
+ * Register a chatId as Admin.
  */
 export async function registerTelegramAdmin(chatId: string, secretOrEmail: string): Promise<boolean> {
   const input = (secretOrEmail || '').toLowerCase().trim();
@@ -1147,8 +1147,195 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
 }
 
 /**
+ * Fetch Gemini API Key from environment or Firestore.
+ */
+async function getGeminiApiKey(): Promise<string | null> {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    const [telegramSnap, aiSnap] = await Promise.all([
+      getDoc(doc(firestore, 'companySettings', 'telegram')),
+      getDoc(doc(firestore, 'companySettings', 'ai'))
+    ]);
+
+    if (telegramSnap.exists() && telegramSnap.data()?.geminiApiKey) {
+      return telegramSnap.data().geminiApiKey;
+    }
+    if (aiSnap.exists() && aiSnap.data()?.geminiApiKey) {
+      return aiSnap.data().geminiApiKey;
+    }
+  } catch (err) {
+    console.error('Error reading Gemini API key from Firestore:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Build rich live business context from Firestore for Gemini reasoning.
+ */
+async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<string> {
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    const today = new Date().toISOString().split('T')[0];
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    const [companiesSnap, forkliftsSnap, invoicesSnap, paymentsSnap, attendanceSnap, employeesSnap] = await Promise.all([
+      getDocs(collection(firestore, 'companies')),
+      getDocs(collection(firestore, 'forklifts')),
+      getDocs(collection(firestore, 'invoices')),
+      getDocs(collection(firestore, 'payments')),
+      getDocs(query(collection(firestore, 'attendance'), where('date', '==', today))),
+      getDocs(collection(firestore, 'employees')),
+    ]);
+
+    const companyMap = new Map<string, string>();
+    companiesSnap.docs.forEach(d => companyMap.set(d.id, String(d.data().name || 'Company')));
+
+    const empMap = new Map<string, string>();
+    employeesSnap.docs.forEach(d => empMap.set(d.id, String(d.data().fullName || 'Employee')));
+
+    // Financial aggregation per company
+    const compDueMap = new Map<string, { billed: number; received: number; due: number; billsCount: number }>();
+    const invoicePaymentMap = new Map<string, number>();
+
+    paymentsSnap.docs.forEach(d => {
+      const p = d.data();
+      if (p.invoiceId) {
+        const totalPaid = Number(p.receivedAmount || 0) + Number(p.tdsDeducted || 0) + Number(p.otherDeductions || 0);
+        invoicePaymentMap.set(p.invoiceId, (invoicePaymentMap.get(p.invoiceId) || 0) + totalPaid);
+      }
+    });
+
+    invoicesSnap.docs.forEach(d => {
+      const inv = d.data();
+      const ent = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+      if (activeFirm !== 'Both' && ent !== activeFirm) return;
+
+      const compName = companyMap.get(inv.companyId) || 'Unknown Client';
+      const grand = Number(inv.grandTotal || 0);
+      const paid = invoicePaymentMap.get(d.id) || 0;
+      const due = Math.max(0, grand - paid);
+
+      const existing = compDueMap.get(compName) || { billed: 0, received: 0, due: 0, billsCount: 0 };
+      existing.billed += grand;
+      existing.received += paid;
+      existing.due += due;
+      existing.billsCount += 1;
+      compDueMap.set(compName, existing);
+    });
+
+    const topDebtors = Array.from(compDueMap.entries())
+      .map(([name, data]) => `${name}: Billed ₹${formatInr(data.billed)}, Received ₹${formatInr(data.received)}, Pending Due ₹${formatInr(data.due)} (${data.billsCount} bills)`)
+      .slice(0, 20)
+      .join('\n');
+
+    // Forklifts
+    let forklifts = forkliftsSnap.docs.map(d => d.data());
+    if (activeFirm !== 'Both') {
+      forklifts = forklifts.filter(f => (f.firm || 'Vithal') === activeFirm);
+    }
+    const workshopForklifts = forklifts.filter(f => f.locationType === 'Workshop').map(f => `#${f.serialNumber} (${f.firm || 'Vithal'} ${f.make || ''} ${f.model || ''} - ${f.capacity || 'N/A'})`).join(', ') || 'None';
+    const onsiteForklifts = forklifts.filter(f => f.locationType === 'On-Site').map(f => `#${f.serialNumber} at ${f.siteCompany || 'Site'} (${f.firm || 'Vithal'})`).join(', ') || 'None';
+
+    // Attendance
+    const presentStaff: string[] = [];
+    const absentStaff: string[] = [];
+    attendanceSnap.docs.forEach(d => {
+      const r = d.data();
+      const name = empMap.get(r.employeeId) || 'Staff';
+      if (r.status === 'Present') presentStaff.push(name);
+      if (r.status === 'Absent') absentStaff.push(name);
+    });
+
+    return `
+=== REAL-TIME ENTERPRISE FACTS ===
+Active Firm Scope: ${activeFirm === 'Both' ? 'Both Vithal & R.V Enterprises' : activeFirm}
+Today's Date: ${today} (${formatDateReadable(today)})
+Current Billing Month: ${currentMonth}
+
+--- FLEET DETAILS ---
+Total Units: ${forklifts.length}
+Workshop Idle Units: ${workshopForklifts}
+On-Site Deployed Units: ${onsiteForklifts}
+
+--- TODAY'S ATTENDANCE ---
+Total Staff: ${employeesSnap.size}
+Present (${presentStaff.length}): ${presentStaff.join(', ') || 'None marked'}
+Absent (${absentStaff.length}): ${absentStaff.join(', ') || 'None marked'}
+
+--- CLIENT BALANCES & REVENUE (Top Clients) ---
+${topDebtors}
+===================================
+`;
+  } catch (err) {
+    console.error('Error generating live business context:', err);
+    return '';
+  }
+}
+
+/**
+ * Query Google Gemini AI model with live business grounding.
+ */
+async function queryGeminiAI(userPrompt: string, activeFirm: EnterpriseType): Promise<string | null> {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const liveContext = await buildLiveBusinessContext(activeFirm);
+
+    const systemInstruction = `
+You are the official AI Business Assistant for "Vithal Enterprises" and "R.V Enterprises" (Industrial Forklift Rental & Services, Maharashtra, India).
+The user is the Business Owner / Admin.
+
+RULES:
+1. Speak in clean, professional Hinglish / Hindi / English (matching the user's conversation style).
+2. Ground all answers strictly in the provided REAL-TIME ENTERPRISE FACTS.
+3. NEVER make up fake numbers or invoices.
+4. Format all responses with clean, readable mobile bullet points, bold numbers, and emojis (🏢, 💰, 🚜, 📅, ⚠️, ✅, ⏳).
+5. Format currency as "₹ X,XX,XXX".
+6. Keep answers concise, clear, and direct.
+`;
+
+    const requestBody = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: `${systemInstruction}\n\n${liveContext}\n\nUSER'S QUESTION: "${userPrompt}"` }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1500,
+      }
+    };
+
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!res.ok) {
+      console.warn('Gemini API returned status:', res.status);
+      return null;
+    }
+
+    const json = await res.json();
+    const answer = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    return answer ? answer.trim() : null;
+  } catch (err) {
+    console.error('Gemini query failed:', err);
+    return null;
+  }
+}
+
+/**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization, fuzzy matching, ranking, and clean layout.
+ * Combines Deterministic Accuracy + Google Gemini AI for Conversational Mastery.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
@@ -1193,7 +1380,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     }
 
     // ─── 2. TOP OUTSTANDING DUE / DEBTORS LIST ─────────────────────────────
-    // e.g. "top pending", "kiske kitne baki hai", "who owes money", "pending list", "sabse zyada balance"
     if (
       lower.includes('top pending') ||
       lower.includes('pending list') ||
@@ -1338,13 +1524,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     for (const companyFullName of allCompanyNames) {
       const companyLower = companyFullName.toLowerCase();
 
-      // Exact substring match
       if (lower.includes(companyLower)) {
         matchedCompanies.push(companyFullName);
         continue;
       }
 
-      // Brand word match
       const brandWords = companyLower
         .split(/[\s,./()]+/)
         .filter(w => w.length >= 3 && !stopWords.has(w));
@@ -1356,7 +1540,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
         continue;
       }
 
-      // Fuzzy typo check (e.g. "bislri" for "bisleri", "hindlco" for "hindalco")
       const queryWords = lower.split(/[\s,./()]+/).filter(w => w.length >= 4 && !stopWords.has(w));
       for (const qWord of queryWords) {
         for (const bWord of brandWords) {
@@ -1378,6 +1561,16 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
     }
 
+    // ─── 11. GEMINI AI NATURAL CONVERSATIONAL ENGINE ───────────────────────
+    // If no direct rule matched, let Gemini AI reason over live Firestore business facts!
+    const aiResponse = await queryGeminiAI(raw, activeFirm);
+    if (aiResponse) {
+      return {
+        text: aiResponse,
+        buttons: renderFirmRadioButtons(activeFirm),
+      };
+    }
+
   } catch (err: any) {
     console.error('Smart NLP processing error:', err);
     return { text: `⚠️ *Error accessing data:* ${err.message || 'Database error'}` };
@@ -1386,7 +1579,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
   // Helpful standard guide
   const activeFirm = await getUserActiveFirm(chatId);
   return {
-    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap simple Hindi / English me ye puch sakte hain:\n\n• 🏢 *Company Bills / Due:* e.g. _"Bisleri pending"_, _"Bisleri Aug bills"_\n• ⚠️ *Top Pending Balance:* e.g. _"Top pending"_, _"Kiske kitne baki hai"_\n• 💰 *Monthly Revenue:* e.g. _"Last month billing"_, _"July revenue"_\n• 🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n• 📅 *Attendance:* e.g. _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
+    text: `🤖 *VE Dashboard AI Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap natural Hindi / English me koi bhi sawaal pooch sakte hain:\n\n• 🏢 *Company Bills / Due:* e.g. _"Bisleri pending"_, _"Bisleri Aug bills"_\n• ⚠️ *Top Pending Balance:* e.g. _"Top pending"_, _"Kiske kitne baki hai"_\n• 💰 *Monthly Revenue:* e.g. _"Last month billing"_, _"July revenue"_\n• 🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n• 📅 *Attendance:* e.g. _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
     buttons: renderFirmRadioButtons(activeFirm),
   };
 }
