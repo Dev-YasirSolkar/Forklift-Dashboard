@@ -33,7 +33,7 @@ const monthMap: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
   
   if (!token) {
     return NextResponse.json({ ok: false, error: 'Bot token missing' }, { status: 500 });
@@ -285,7 +285,7 @@ export async function POST(req: Request) {
 
 async function sendTelegramMessage(token: string, chatId: string, text: string) {
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -294,6 +294,19 @@ async function sendTelegramMessage(token: string, chatId: string, text: string) 
         parse_mode: 'Markdown',
       }),
     });
+    const result = await res.json();
+    
+    // If Markdown parsing fails (e.g. unescaped symbols), retry in plain text so message is NEVER lost
+    if (!result.ok && result.description?.includes('can\'t parse entities')) {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text.replace(/[*_`]/g, ''),
+        }),
+      });
+    }
   } catch (err) {
     console.error('Failed to send Telegram text message:', err);
   }

@@ -316,7 +316,7 @@ export async function getMonthlyBillingSummary(): Promise<string> {
  * Process any free-form natural language query using Gemini 2.0 Flash.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || 'AIzaSyDER55dvCYcL-Ipopaw_VLVtHQcv90KI40';
   if (!apiKey) {
     return '⚠️ Gemini API Key is missing in server environment.';
   }

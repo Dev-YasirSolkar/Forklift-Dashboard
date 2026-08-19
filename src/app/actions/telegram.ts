@@ -6,7 +6,7 @@
  */
 
 export async function sendTelegramDocument(chatId: string, base64Data: string, fileName: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
   if (!token) {
     throw new Error('Telegram Bot Token is not configured.');
   }
@@ -44,7 +44,7 @@ export async function sendTelegramDocument(chatId: string, base64Data: string, f
  * Connects the Telegram Bot to our server using Webhooks.
  */
 export async function setupTelegramWebhook(baseUrl: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
   if (!token) throw new Error('Bot token missing in environment variables.');
 
   // Clean the baseUrl (remove trailing slash)
