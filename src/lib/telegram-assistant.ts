@@ -1,8 +1,8 @@
 /**
  * @fileOverview Smart Telegram Assistant Module
- * Handles natural language querying over Firestore data for Admin & Employees with beautiful tabular output,
- * permanent admin session persistence, interactive radio button firm selection (Vithal vs RV vs Both),
- * intent routing, and multi-company disambiguation buttons.
+ * Handles natural language querying over Firestore data for Admin & Employees.
+ * Formats all data in clean, mobile-friendly bullet points with line breaks (zero ASCII tables).
+ * Supports month intelligence: 'previous month', 'last month', 'aug month bills', 'july revenue', etc.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -35,20 +35,24 @@ const awaitingFirmSelection = new Set<string>();
 export const ADMIN_SECRET_CODE = '2028';
 
 /**
- * Helper to pad strings for monospace ASCII tables.
- */
-function pad(str: string | number, length: number, align: 'left' | 'right' = 'left'): string {
-  const s = String(str ?? '');
-  if (s.length >= length) return s.slice(0, length);
-  const diff = length - s.length;
-  return align === 'right' ? ' '.repeat(diff) + s : s + ' '.repeat(diff);
-}
-
-/**
- * Format currency in Indian number system.
+ * Format currency in Indian number system with commas.
  */
 function formatInr(num: number): string {
   return num.toLocaleString('en-IN');
+}
+
+/**
+ * Format a YYYY-MM-DD string into a readable date (e.g. 15 Aug 2026).
+ */
+function formatDateReadable(dateStr: string): string {
+  if (!dateStr) return 'N/A';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
 }
 
 /**
@@ -58,6 +62,76 @@ function hasWord(text: string, word: string): boolean {
   const cleanWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const regex = new RegExp(`(^|[^a-zA-Z0-9])${cleanWord}([^a-zA-Z0-9]|$)`, 'i');
   return regex.test(text);
+}
+
+/**
+ * Month Parser: Detects mentions of specific or relative months in user prompt.
+ * e.g. "aug bills", "august billing", "last month", "previous month", "pichle mahine"
+ */
+export function extractTargetMonth(text: string): { monthKey: string; monthLabel: string } | null {
+  const lower = text.toLowerCase();
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthIdx = now.getMonth(); // 0-11
+
+  // 1. Relative: Previous Month / Last Month / Pichle Mahine
+  if (
+    lower.includes('last month') ||
+    lower.includes('previous month') ||
+    lower.includes('prev month') ||
+    lower.includes('pichle mahine') ||
+    lower.includes('pichla mahina') ||
+    lower.includes('last mo')
+  ) {
+    const prevDate = new Date(currentYear, currentMonthIdx - 1, 1);
+    const y = prevDate.getFullYear();
+    const m = String(prevDate.getMonth() + 1).padStart(2, '0');
+    const label = prevDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    return { monthKey: `${y}-${m}`, monthLabel: label };
+  }
+
+  // 2. Relative: This Month / Current Month / Is Mahine
+  if (
+    lower.includes('this month') ||
+    lower.includes('current month') ||
+    lower.includes('is mahine') ||
+    lower.includes('ye mahina') ||
+    lower.includes('present month')
+  ) {
+    const y = currentYear;
+    const m = String(currentMonthIdx + 1).padStart(2, '0');
+    const label = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    return { monthKey: `${y}-${m}`, monthLabel: label };
+  }
+
+  // 3. Named Months (Jan - Dec)
+  const monthNames: Record<string, number> = {
+    'jan': 1, 'january': 1,
+    'feb': 2, 'february': 2,
+    'mar': 3, 'march': 3,
+    'apr': 4, 'april': 4,
+    'may': 5,
+    'jun': 6, 'june': 6,
+    'jul': 7, 'july': 7,
+    'aug': 8, 'august': 8,
+    'sep': 9, 'september': 9, 'sept': 9,
+    'oct': 10, 'october': 10,
+    'nov': 11, 'november': 11,
+    'dec': 12, 'december': 12,
+  };
+
+  for (const [mName, mNum] of Object.entries(monthNames)) {
+    if (hasWord(lower, mName) || lower.includes(`${mName} month`) || lower.includes(`${mName} bill`)) {
+      const mStr = String(mNum).padStart(2, '0');
+      // If the selected month is ahead of current month, assume previous year, else current year
+      const y = (mNum > currentMonthIdx + 1) ? (currentYear - 1) : currentYear;
+      const d = new Date(y, mNum - 1, 1);
+      const label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      return { monthKey: `${y}-${mStr}`, monthLabel: label };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -152,10 +226,10 @@ export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): P
       ? '🏢 R.V ENTERPRISES' 
       : '🌐 BOTH FIRMS (Vithal + RV)';
 
-  let msg = `✅ *Active Firm Updated:*\n${label}\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `Ab saare bills, fleet aur revenue reports **${label}** ke hisaab se aayenge.\n\n`;
-  msg += `_Tap any button below to change firm anytime:_`;
+  let msg = `✅ *Active Firm Updated:*\n*${label}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `Ab aapke saare bills, fleet aur revenue reports **${label}** ke hisaab se dikhayenge.\n\n`;
+  msg += `_Firm change karne ke liye neeche button tap karein:_`;
 
   return {
     text: msg,
@@ -195,11 +269,11 @@ export async function renderFirmSelectionMenu(chatId: string): Promise<Assistant
   const currentFirm = await getUserActiveFirm(chatId);
 
   let msg = `🏢 *SELECT ACTIVE FIRM / ENTERPRISE*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
   msg += `Kripya apni active firm select karein:\n\n`;
-  msg += `• *Vithal Enterprises:* Sirf Vithal ke bills & fleet\n`;
-  msg += `• *R.V Enterprises:* Sirf RV ke bills & fleet\n`;
-  msg += `• *Both Firms:* Vithal & RV ke alag-alag distinct tables\n\n`;
+  msg += `• *Vithal Enterprises:* Sirf Vithal ke bills aur fleet\n`;
+  msg += `• *R.V Enterprises:* Sirf RV ke bills aur fleet\n`;
+  msg += `• *Both Firms:* Vithal aur RV dono ka alag-alag breakdown\n\n`;
   msg += `👇 *Tap a button below to select:*`;
 
   return {
@@ -238,12 +312,14 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 }
 
 /**
- * Query company details strictly respecting the active firm scope (Vithal vs RV vs Both).
+ * Query company details formatted with clean bullet points and line breaks.
+ * Supports specific month filtering (e.g. "Bisleri aug bills" / "Bisleri last month").
  */
 export async function getCompanyDetailByIntent(
   companyName: string, 
   intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all',
-  activeFirm: EnterpriseType = 'Both'
+  activeFirm: EnterpriseType = 'Both',
+  targetMonth?: { monthKey: string; monthLabel: string } | null
 ): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
@@ -260,7 +336,7 @@ export async function getCompanyDetailByIntent(
   const company = matchedCompanyDoc.data() as CompanySummary;
   const companyId = matchedCompanyDoc.id;
 
-  // 1. Forklifts Intent
+  // ─── 1. FORKLIFTS INTENT ─────────────────────────────────────────────────
   if (intent === 'forklifts') {
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
     let companyForklifts = forkliftsSnap.docs
@@ -274,27 +350,27 @@ export async function getCompanyDetailByIntent(
       companyForklifts = companyForklifts.filter(f => (f.firm || 'Vithal') === activeFirm);
     }
 
-    const firmTag = activeFirm === 'Both' ? 'ALL FIRMS' : activeFirm.toUpperCase();
-    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()} [${firmTag}] (${companyForklifts.length})*\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    const firmTag = activeFirm === 'Both' ? 'Vithal & RV' : activeFirm;
+    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()}*\n`;
+    msg += `🏢 Firm Scope: *${firmTag}* (${companyForklifts.length} Units)\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
     if (companyForklifts.length === 0) {
-      msg += `_No forklifts currently recorded for ${activeFirm} at this client's site._\n`;
+      msg += `_No forklifts currently deployed for ${activeFirm} at this client site._\n`;
     } else {
-      msg += `\`\`\`text\n`;
-      msg += `┌──────────┬────────┬──────────────────┬──────────┐\n`;
-      msg += `│ Serial # │ Firm   │ Make / Model     │ Capacity │\n`;
-      msg += `├──────────┼────────┼──────────────────┼──────────┤\n`;
-      companyForklifts.forEach(f => {
-        const mm = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
-        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(mm, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
+      companyForklifts.forEach((f, idx) => {
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
+        msg += `• 🚜 Model: *${f.make || ''} ${f.model || ''}*\n`;
+        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
+        if (f.siteArea) msg += `• 📍 Site Area: *${f.siteArea}*\n`;
+        if (f.siteContactPerson) msg += `• 👤 Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+        msg += `\n`;
       });
-      msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
-      msg += `\`\`\`\n`;
     }
 
     return {
-      text: msg,
+      text: msg.trim(),
       buttons: [
         [
           { text: '💰 View Pending Bills', callback_data: `comp_pend:${company.name}` },
@@ -307,7 +383,7 @@ export async function getCompanyDetailByIntent(
     };
   }
 
-  // 2. Fetch Invoices & Payments
+  // ─── 2. INVOICES & PAYMENTS ──────────────────────────────────────────────
   const invoicesQuery = query(collection(firestore, 'invoices'), where('companyId', '==', companyId));
   const [invoicesSnap, paymentsSnap] = await Promise.all([
     getDocs(invoicesQuery),
@@ -316,15 +392,15 @@ export async function getCompanyDetailByIntent(
 
   if (invoicesSnap.empty) {
     let msg = `🏢 *${company.name.toUpperCase()}*\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
     msg += `📌 *Status:* No invoices recorded yet in dashboard.\n`;
-    if (company.gstin) msg += `🔖 *GSTIN:* \`${company.gstin}\`\n`;
-    if (company.kindAttn) msg += `👤 *Attn:* ${company.kindAttn}\n`;
-    if (company.contactNumber) msg += `📞 *Phone:* ${company.contactNumber}\n`;
+    if (company.gstin) msg += `• 🔖 GSTIN: \`${company.gstin}\`\n`;
+    if (company.kindAttn) msg += `• 👤 Attn: *${company.kindAttn}*\n`;
+    if (company.contactNumber) msg += `• 📞 Phone: *${company.contactNumber}*\n`;
     return { text: msg };
   }
 
-  const invoiceMap: Record<string, { billNo: number | string; date: string; amount: number; received: number; enterprise: string }> = {};
+  const invoiceMap: Record<string, { billNo: number | string; date: string; amount: number; received: number; enterprise: string; billingMonth: string }> = {};
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
@@ -334,10 +410,18 @@ export async function getCompanyDetailByIntent(
       return;
     }
 
+    const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
+
+    // If a month filter is applied, only keep invoices belonging to that month!
+    if (targetMonth && bMonth && bMonth !== targetMonth.monthKey) {
+      return;
+    }
+
     const grandTotal = Number(inv.grandTotal || 0);
     invoiceMap[d.id] = {
       billNo: inv.billNo || 'N/A',
       date: inv.billDate || inv.billingMonth || '',
+      billingMonth: bMonth,
       amount: grandTotal,
       received: 0,
       enterprise,
@@ -357,13 +441,14 @@ export async function getCompanyDetailByIntent(
   const filteredInvoices = Object.values(invoiceMap);
 
   if (filteredInvoices.length === 0) {
+    const monthText = targetMonth ? `for *${targetMonth.monthLabel}*` : '';
     return {
-      text: `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n📌 No invoices found under *${activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'}* for this client.`,
-      buttons: [[{ text: '🌐 View Both Firms', callback_data: 'firm:Both' }]],
+      text: `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices found ${monthText} under *${activeFirm === 'Both' ? 'Vithal / RV' : activeFirm}*.`,
+      buttons: [[{ text: '🌐 View All Months / Both Firms', callback_data: 'firm:Both' }]],
     };
   }
 
-  // Sort invoices chronologically by Date, then by Bill Number
+  // Sort chronologically by Date & Bill Number
   filteredInvoices.sort((a, b) => {
     const timeA = a.date ? new Date(a.date).getTime() : 0;
     const timeB = b.date ? new Date(b.date).getTime() : 0;
@@ -388,27 +473,34 @@ export async function getCompanyDetailByIntent(
   const rvRec = rvInvoices.reduce((s, i) => s + i.received, 0);
   const rvDue = Math.max(0, rvTotal - rvRec);
 
-  const firmHeader = activeFirm === 'Both' ? 'VITHAL & R.V ENTERPRISES' : activeFirm === 'RV' ? 'R.V ENTERPRISES' : 'VITHAL ENTERPRISES';
+  const firmHeader = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+  const monthHeader = targetMonth ? `📅 Month: *${targetMonth.monthLabel}*\n` : '';
 
-  // 3. User specifically asked for ALL BILLS
+  // ─── 3. USER SPECIFICALLY ASKED FOR ALL INVOICES HISTORY ─────────────────
   if (intent === 'bills') {
     let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()}*\n`;
-    text += `🏢 Scope: *${firmHeader}* (${filteredInvoices.length} Bills)\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `\`\`\`text\n`;
-    text += `┌────┬─────────┬────────┬──────────────┬────────────┬─────────────┐\n`;
-    text += `│ #  │ Bill #  │ Firm   │ Total (₹)    │ Date       │ Status      │\n`;
-    text += `├────┼─────────┼────────┼──────────────┼────────────┼─────────────┤\n`;
-    filteredInvoices.forEach((inv, index) => {
+    text += `🏢 Firm Scope: *${firmHeader}*\n`;
+    if (monthHeader) text += monthHeader;
+    text += `📊 Total Bills: *${filteredInvoices.length} Invoices*\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    filteredInvoices.forEach((inv, idx) => {
       const due = inv.amount - inv.received;
-      const status = due <= 1 ? 'PAID' : `DUE ₹${formatInr(due)}`;
-      text += `│ ${pad(index + 1, 2)} │ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(inv.amount), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │ ${pad(status, 11)} │\n`;
+      const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+      const statusEmoji = due <= 1 ? '✅ PAID' : `⏳ DUE ₹${formatInr(due)}`;
+
+      text += `${idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
+      text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
+      text += `• 💰 Amount: *₹ ${formatInr(inv.amount)}*\n`;
+      text += `• 🏁 Status: *${statusEmoji}*\n\n`;
     });
-    text += `└────┴─────────┴────────┴──────────────┴────────────┴─────────────┘\n`;
-    text += `\`\`\`\n`;
+
+    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `💰 *Total Billed:* *₹ ${formatInr(vithalTotal + rvTotal)}*\n`;
+    text += `⚠️ *Total Due:* *₹ ${formatInr(vithalDue + rvDue)}*\n`;
 
     return {
-      text,
+      text: text.trim(),
       buttons: [
         [
           { text: '⚠️ View Pending Only', callback_data: `comp_pend:${company.name}` },
@@ -418,62 +510,54 @@ export async function getCompanyDetailByIntent(
     };
   }
 
-  // 4. Default / Pending View: Clean Non-Mixed Tables
+  // ─── 4. DEFAULT / PENDING DUE VIEW (CLEAN BULLET POINTS) ──────────────────
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
-  text += `🔖 Scope: *${firmHeader}*\n`;
-  text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  text += `🏢 Firm Scope: *${firmHeader}*\n`;
+  if (monthHeader) text += monthHeader;
+  text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
+  text += `💰 *FINANCIAL OVERVIEW:*\n`;
   if (activeFirm === 'Both') {
-    text += `\`\`\`text\n`;
-    text += `┌──────────────────────┬──────────────┬──────────────┐\n`;
-    text += `│ ENTERPRISE           │ BILLED (₹)   │ DUE (₹)      │\n`;
-    text += `├──────────────────────┼──────────────┼──────────────┤\n`;
-    text += `│ Vithal Enterprises   │ ${pad(formatInr(vithalTotal), 12, 'right')} │ ${pad(formatInr(vithalDue), 12, 'right')} │\n`;
-    text += `│ R.V Enterprises      │ ${pad(formatInr(rvTotal), 12, 'right')} │ ${pad(formatInr(rvDue), 12, 'right')} │\n`;
-    text += `├──────────────────────┼──────────────┼──────────────┤\n`;
-    text += `│ TOTAL COMBINED       │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │ ${pad(formatInr(vithalDue + rvDue), 12, 'right')} │\n`;
-    text += `└──────────────────────┴──────────────┴──────────────┘\n`;
-    text += `\`\`\`\n`;
+    text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
+    text += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*\n`;
+    text += `• 💎 *Total Billed:* *₹ ${formatInr(vithalTotal + rvTotal)}*\n`;
+    text += `• ✅ *Total Received:* *₹ ${formatInr(vithalRec + rvRec)}*\n`;
+    text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(vithalDue + rvDue)}*\n\n`;
   } else {
     const total = activeFirm === 'RV' ? rvTotal : vithalTotal;
     const rec = activeFirm === 'RV' ? rvRec : vithalRec;
     const due = activeFirm === 'RV' ? rvDue : vithalDue;
 
-    text += `\`\`\`text\n`;
-    text += `┌──────────────────────┬──────────────┐\n`;
-    text += `│ METRIC (${pad(activeFirm, 6)})      │ AMOUNT (₹)   │\n`;
-    text += `├──────────────────────┼──────────────┤\n`;
-    text += `│ Total Billed         │ ${pad(formatInr(total), 12, 'right')} │\n`;
-    text += `│ Total Received       │ ${pad(formatInr(rec), 12, 'right')} │\n`;
-    text += `├──────────────────────┼──────────────┤\n`;
-    text += `│ OUTSTANDING DUE      │ ${pad(formatInr(due), 12, 'right')} │\n`;
-    text += `└──────────────────────┴──────────────┘\n`;
-    text += `\`\`\`\n`;
+    text += `• Total Billed: *₹ ${formatInr(total)}*\n`;
+    text += `• Total Received: *₹ ${formatInr(rec)}*\n`;
+    text += `• ⚠️ *OUTSTANDING DUE:* *₹ ${formatInr(due)}*\n\n`;
   }
 
-  // Complete List of Unpaid Bills (Strictly Distinct with Sr No & Date Sorted)
+  text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+
   if (unpaidInvoices.length > 0) {
-    text += `📋 *Unpaid Bills (${unpaidInvoices.length}):*\n`;
-    text += `\`\`\`text\n`;
-    text += `┌────┬─────────┬────────┬──────────────┬────────────┐\n`;
-    text += `│ #  │ Bill #  │ Firm   │ Due (₹)      │ Date       │\n`;
-    text += `├────┼─────────┼────────┼──────────────┼────────────┤\n`;
-    unpaidInvoices.forEach((inv, index) => {
+    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length}):*\n\n`;
+    unpaidInvoices.forEach((inv, idx) => {
       const due = inv.amount - inv.received;
-      text += `│ ${pad(index + 1, 2)} │ ${pad(inv.billNo, 7)} │ ${pad(inv.enterprise, 6)} │ ${pad(formatInr(due), 12, 'right')} │ ${pad(inv.date || 'N/A', 10)} │\n`;
+      const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+
+      text += `${idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
+      text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
+      text += `• 💰 Due Amount: *₹ ${formatInr(due)}*\n`;
+      text += `• 📊 Total Bill: ₹ ${formatInr(inv.amount)}\n\n`;
     });
-    text += `└────┴─────────┴────────┴──────────────┴────────────┘\n`;
-    text += `\`\`\`\n`;
   } else {
-    text += `✨ *All bills for ${firmHeader} are fully settled!* 🎉\n`;
+    text += `✨ *All invoices for ${firmHeader} are fully paid!* 🎉\n\n`;
   }
 
   if (company.contactNumber || company.kindAttn) {
-    text += `📞 *Contact:* ${company.kindAttn || ''} ${company.contactNumber ? `(\`${company.contactNumber}\`)` : ''}\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `📞 *Contact Person:* ${company.kindAttn || 'N/A'}\n`;
+    if (company.contactNumber) text += `📱 *Phone:* \`${company.contactNumber}\`\n`;
   }
 
   return {
-    text,
+    text: text.trim(),
     buttons: [
       [
         { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
@@ -487,7 +571,7 @@ export async function getCompanyDetailByIntent(
 }
 
 /**
- * Get fleet status in a clean table format filtered by active firm.
+ * Get fleet status in clean bullet points with line breaks.
  */
 export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', activeFirm: EnterpriseType = 'Both'): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
@@ -505,29 +589,27 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
   const workshop = all.filter(f => f.locationType === 'Workshop');
   const onSite = all.filter(f => f.locationType === 'On-Site');
   const notConfirmed = all.filter(f => f.locationType === 'Not Confirm');
-  const firmLabel = activeFirm === 'Both' ? 'BOTH FIRMS' : activeFirm.toUpperCase();
+  const firmLabel = activeFirm === 'Both' ? 'Vithal & RV Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
   if (locationFilter === 'Workshop') {
-    let msg = `🏭 *WORKSHOP IDLE FORKLIFTS [${firmLabel}] (${workshop.length})*\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    let msg = `🏭 *WORKSHOP IDLE FORKLIFTS (${workshop.length})*\n`;
+    msg += `🏢 Scope: *${firmLabel}*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
     if (workshop.length === 0) {
-      msg += `_No forklifts currently idle in workshop for ${activeFirm}._`;
+      msg += `_No forklifts currently idle in workshop for ${activeFirm}._\n`;
     } else {
-      msg += `\`\`\`text\n`;
-      msg += `┌──────────┬────────┬──────────────────┬──────────┐\n`;
-      msg += `│ Serial # │ Firm   │ Make / Model     │ Capacity │\n`;
-      msg += `├──────────┼────────┼──────────────────┼──────────┤\n`;
-      workshop.forEach(f => {
-        const makeModel = `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift';
-        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(makeModel, 16)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
+      workshop.forEach((f, idx) => {
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
+        msg += `• 🚜 Model: *${f.make || ''} ${f.model || ''}*\n`;
+        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
+        msg += `• 📍 Location: *Workshop*\n\n`;
       });
-      msg += `└──────────┴────────┴──────────────────┴──────────┘\n`;
-      msg += `\`\`\`\n`;
     }
 
     return {
-      text: msg,
+      text: msg.trim(),
       buttons: [
         [
           { text: '📍 On-Site Units', callback_data: 'quick:onsite' },
@@ -538,26 +620,26 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
   }
 
   if (locationFilter === 'On-Site') {
-    let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS [${firmLabel}] (${onSite.length})*\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS (${onSite.length})*\n`;
+    msg += `🏢 Scope: *${firmLabel}*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
     if (onSite.length === 0) {
-      msg += `_No forklifts currently deployed on-site for ${activeFirm}._`;
+      msg += `_No forklifts currently deployed on-site for ${activeFirm}._\n`;
     } else {
-      msg += `\`\`\`text\n`;
-      msg += `┌──────────┬────────┬──────────────────────┬──────────┐\n`;
-      msg += `│ Serial # │ Firm   │ Client / Site        │ Capacity │\n`;
-      msg += `├──────────┼────────┼──────────────────────┼──────────┤\n`;
-      onSite.forEach(f => {
+      onSite.forEach((f, idx) => {
         const site = f.siteCompany || f.siteArea || 'Client Site';
-        const firm = (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal';
-        msg += `│ ${pad(f.serialNumber, 8)} │ ${pad(firm, 6)} │ ${pad(site, 20)} │ ${pad(f.capacity || 'N/A', 8)} │\n`;
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
+        msg += `• 🏢 Client Site: *${site}*\n`;
+        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
+        if (f.siteArea) msg += `• 📍 Area: *${f.siteArea}*\n`;
+        msg += `\n`;
       });
-      msg += `└──────────┴────────┴──────────────────────┴──────────┘\n`;
-      msg += `\`\`\`\n`;
     }
 
     return {
-      text: msg,
+      text: msg.trim(),
       buttons: [
         [
           { text: '🏭 Workshop Units', callback_data: 'quick:workshop' },
@@ -569,23 +651,23 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
 
   const utilRate = all.length > 0 ? ((onSite.length / all.length) * 100).toFixed(0) : '0';
 
-  let msg = `🚜 *TOTAL FLEET SUMMARY [${firmLabel}]*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-  msg += `┌──────────────────────┬──────────────┐\n`;
-  msg += `│ CATEGORY             │ UNITS        │\n`;
-  msg += `├──────────────────────┼──────────────┤\n`;
-  msg += `│ Total Fleet          │ ${pad(all.length, 12, 'right')} │\n`;
-  msg += `│ On-Site (Deployed)   │ ${pad(onSite.length, 12, 'right')} │\n`;
-  msg += `│ Workshop (Idle)      │ ${pad(workshop.length, 12, 'right')} │\n`;
-  msg += `│ Unconfirmed          │ ${pad(notConfirmed.length, 12, 'right')} │\n`;
-  msg += `├──────────────────────┼──────────────┤\n`;
-  msg += `│ FLEET UTILIZATION    │ ${pad(utilRate + '%', 12, 'right')} │\n`;
-  msg += `└──────────────────────┴──────────────┘\n`;
-  msg += `\`\`\`\n`;
+  let msg = `🚜 *TOTAL FLEET OVERVIEW*\n`;
+  msg += `🏢 Scope: *${firmLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  msg += `📊 *FLEET BREAKDOWN:*\n`;
+  msg += `• 🚜 Total Fleet: *${all.length} Units*\n`;
+  msg += `• 🟢 On-Site (Deployed): *${onSite.length} Units*\n`;
+  msg += `• 🟠 Workshop (Idle): *${workshop.length} Units*\n`;
+  if (notConfirmed.length > 0) {
+    msg += `• 🔴 Unconfirmed: *${notConfirmed.length} Units*\n`;
+  }
+  msg += `• 📈 Fleet Utilization: *${utilRate}%*\n\n`;
+
+  msg += `_Tap a button below to view detailed lists:_`;
 
   return {
-    text: msg,
+    text: msg.trim(),
     buttons: [
       [
         { text: '🏭 Workshop Units', callback_data: 'quick:workshop' },
@@ -616,31 +698,26 @@ export async function getForkliftDetail(serialQuery: string): Promise<AssistantR
   }
 
   const f = matched.data();
-  let msg = `🚜 *FORKLIFT: ${f.serialNumber}*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-  msg += `┌─────────────┬──────────────────────────┐\n`;
-  msg += `│ Field       │ Value                    │\n`;
-  msg += `├─────────────┼──────────────────────────┤\n`;
-  msg += `│ Serial No   │ ${pad(f.serialNumber, 24)} │\n`;
-  msg += `│ Make/Model  │ ${pad((f.make || '') + ' ' + (f.model || ''), 24)} │\n`;
-  msg += `│ Capacity    │ ${pad(f.capacity || 'N/A', 24)} │\n`;
-  msg += `│ Firm        │ ${pad(f.firm || 'Vithal', 24)} │\n`;
-  msg += `│ Location    │ ${pad(f.locationType || 'N/A', 24)} │\n`;
-  if (f.locationType === 'On-Site') {
-    msg += `│ Client Site │ ${pad(f.siteCompany || 'N/A', 24)} │\n`;
-    msg += `│ Site Area   │ ${pad(f.siteArea || 'N/A', 24)} │\n`;
-  }
-  msg += `└─────────────┴──────────────────────────┘\n`;
-  msg += `\`\`\`\n`;
-  if (f.siteContactPerson) msg += `👤 *Site Contact:* ${f.siteContactPerson} (${f.siteContactNumber || 'N/A'})\n`;
-  if (f.remarks) msg += `📝 *Remarks:* ${f.remarks}\n`;
+  const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
-  return { text: msg };
+  let msg = `🚜 *FORKLIFT DETAILS: #${f.serialNumber}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `• 🏭 Firm: *${firm}*\n`;
+  msg += `• 🚜 Make / Model: *${f.make || ''} ${f.model || ''}*\n`;
+  msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
+  msg += `• 📍 Location: *${f.locationType || 'N/A'}*\n`;
+  if (f.locationType === 'On-Site') {
+    msg += `• 🏢 Client Site: *${f.siteCompany || 'N/A'}*\n`;
+    if (f.siteArea) msg += `• 📍 Area: *${f.siteArea}*\n`;
+    if (f.siteContactPerson) msg += `• 👤 Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+  }
+  if (f.remarks) msg += `• 📝 Remarks: _${f.remarks}_\n`;
+
+  return { text: msg.trim() };
 }
 
 /**
- * Get today's attendance summary as a clean table.
+ * Get today's attendance summary in clean bullet points.
  */
 export async function getTodayAttendanceSummary(): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
@@ -666,37 +743,48 @@ export async function getTodayAttendanceSummary(): Promise<AssistantResponse> {
     else if (r.status === 'Half-Day') halfDay.push(name);
   });
 
-  let msg = `📅 *ATTENDANCE TODAY (${today})*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-  msg += `┌──────────────────────┬──────────────┐\n`;
-  msg += `│ ATTENDANCE METRIC    │ COUNT        │\n`;
-  msg += `├──────────────────────┼──────────────┤\n`;
-  msg += `│ Total Staff          │ ${pad(empSnap.size, 12, 'right')} │\n`;
-  msg += `│ Present Staff        │ ${pad(present.length, 12, 'right')} │\n`;
-  msg += `│ Absent Staff         │ ${pad(absent.length, 12, 'right')} │\n`;
+  let msg = `📅 *ATTENDANCE TODAY (${formatDateReadable(today)})*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  msg += `👥 *ATTENDANCE SUMMARY:*\n`;
+  msg += `• Total Staff: *${empSnap.size}*\n`;
+  msg += `• ✅ Present: *${present.length}*\n`;
+  msg += `• ❌ Absent: *${absent.length}*\n`;
   if (halfDay.length > 0) {
-    msg += `│ Half-Day             │ ${pad(halfDay.length, 12, 'right')} │\n`;
+    msg += `• ⏳ Half-Day: *${halfDay.length}*\n`;
   }
-  msg += `└──────────────────────┴──────────────┘\n`;
-  msg += `\`\`\`\n`;
+  msg += `\n`;
 
   if (absent.length > 0) {
-    msg += `❌ *Absent Staff:*\n• ${absent.join('\n• ')}\n\n`;
-  }
-  if (present.length > 0) {
-    msg += `✅ *Present Staff:*\n• ${present.join('\n• ')}\n`;
+    msg += `❌ *ABSENT STAFF (${absent.length}):*\n`;
+    absent.forEach((name, i) => {
+      msg += `${i + 1}. *${name}*\n`;
+    });
+    msg += `\n`;
   }
 
-  return { text: msg };
+  if (present.length > 0) {
+    msg += `✅ *PRESENT STAFF (${present.length}):*\n`;
+    msg += `• ${present.join(', ')}\n`;
+  }
+
+  return { text: msg.trim() };
 }
 
 /**
- * Get current month billing summary separated cleanly by firm.
+ * Get monthly billing summary with month intelligence (previous month, aug, july, etc.).
  */
-export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Both'): Promise<AssistantResponse> {
+export async function getMonthlyBillingSummary(
+  activeFirm: EnterpriseType = 'Both', 
+  targetMonth?: { monthKey: string; monthLabel: string } | null
+): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
-  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+  // If no target month specified, default to current month YYYY-MM
+  const monthKey = targetMonth ? targetMonth.monthKey : new Date().toISOString().slice(0, 7);
+  const monthLabel = targetMonth 
+    ? targetMonth.monthLabel 
+    : new Date(monthKey + '-01').toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
   const snap = await getDocs(collection(firestore, 'invoices'));
   
@@ -708,7 +796,7 @@ export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Bot
   snap.docs.forEach(d => {
     const inv = d.data();
     const m = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
-    if (m === currentMonth) {
+    if (m === monthKey) {
       const amount = Number(inv.grandTotal || 0);
       if (inv.enterprise === 'RV') {
         rvTotal += amount;
@@ -720,40 +808,29 @@ export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Bot
     }
   });
 
-  const monthDate = new Date(currentMonth + '-01');
-  const monthName = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  let msg = `📊 *BILLING SUMMARY - ${monthLabel.toUpperCase()}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  let msg = `📊 *BILLING SUMMARY (${monthName.toUpperCase()})*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-
-  if (activeFirm === 'Both') {
-    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
-    msg += `│ Enterprise           │ Bills │ Amount (₹)   │\n`;
-    msg += `├──────────────────────┼───────┼──────────────┤\n`;
-    msg += `│ Vithal Enterprises   │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
-    msg += `│ R.V Enterprises      │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
-    msg += `├──────────────────────┼───────┼──────────────┤\n`;
-    msg += `│ TOTAL REVENUE        │ ${pad(vithalCount + rvCount, 5)} │ ${pad(formatInr(vithalTotal + rvTotal), 12, 'right')} │\n`;
-    msg += `└──────────────────────┴───────┴──────────────┘\n`;
-  } else if (activeFirm === 'Vithal') {
-    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
-    msg += `│ VITHAL ENTERPRISES   │ Bills │ Amount (₹)   │\n`;
-    msg += `├──────────────────────┼───────┼──────────────┤\n`;
-    msg += `│ Current Month Bills  │ ${pad(vithalCount, 5)} │ ${pad(formatInr(vithalTotal), 12, 'right')} │\n`;
-    msg += `└──────────────────────┴───────┴──────────────┘\n`;
-  } else {
-    msg += `┌──────────────────────┬───────┬──────────────┐\n`;
-    msg += `│ R.V ENTERPRISES      │ Bills │ Amount (₹)   │\n`;
-    msg += `├──────────────────────┼───────┼──────────────┤\n`;
-    msg += `│ Current Month Bills  │ ${pad(rvCount, 5)} │ ${pad(formatInr(rvTotal), 12, 'right')} │\n`;
-    msg += `└──────────────────────┴───────┴──────────────┘\n`;
+  if (activeFirm === 'Both' || activeFirm === 'Vithal') {
+    msg += `🏭 *VITHAL ENTERPRISES:*\n`;
+    msg += `• Total Invoices: *${vithalCount} Bills*\n`;
+    msg += `• Billed Amount: *₹ ${formatInr(vithalTotal)}*\n\n`;
   }
 
-  msg += `\`\`\`\n`;
+  if (activeFirm === 'Both' || activeFirm === 'RV') {
+    msg += `🏢 *R.V ENTERPRISES:*\n`;
+    msg += `• Total Invoices: *${rvCount} Bills*\n`;
+    msg += `• Billed Amount: *₹ ${formatInr(rvTotal)}*\n\n`;
+  }
+
+  if (activeFirm === 'Both') {
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `💎 *TOTAL COMBINED REVENUE:* *₹ ${formatInr(vithalTotal + rvTotal)}*\n`;
+    msg += `📊 *Total Invoices Generated:* *${vithalCount + rvCount} Bills*\n`;
+  }
 
   return {
-    text: msg,
+    text: msg.trim(),
     buttons: [
       [
         { text: '🔄 Switch to Vithal', callback_data: 'firm:Vithal' },
@@ -767,7 +844,7 @@ export async function getMonthlyBillingSummary(activeFirm: EnterpriseType = 'Bot
 }
 
 /**
- * List all registered companies formatted as a table.
+ * List all registered companies formatted in clean numbered bullet points.
  */
 export async function listAllCompanies(): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
@@ -778,20 +855,19 @@ export async function listAllCompanies(): Promise<AssistantResponse> {
   }
 
   let msg = `🏢 *REGISTERED CLIENTS (${snap.size})*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `\`\`\`text\n`;
-  msg += `┌────┬──────────────────────────────────┐\n`;
-  msg += `│ #  │ Company Name                     │\n`;
-  msg += `├────┼──────────────────────────────────┤\n`;
-  snap.docs.slice(0, 30).forEach((d, i) => {
-    const c = d.data();
-    msg += `│ ${pad(i + 1, 2)} │ ${pad(c.name || 'Company', 32)} │\n`;
-  });
-  msg += `└────┴──────────────────────────────────┘\n`;
-  msg += `\`\`\`\n`;
-  msg += `_Type any company name (e.g. Bisleri) to view pending balance._`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  return { text: msg };
+  snap.docs.forEach((d, i) => {
+    const c = d.data();
+    msg += `${i + 1}. *${c.name}*`;
+    if (c.contactNumber) msg += ` (📞 ${c.contactNumber})`;
+    msg += `\n`;
+  });
+
+  msg += `\n━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `_Type any company name (e.g. "Bisleri" or "Bisleri Aug bills") to view details._`;
+
+  return { text: msg.trim() };
 }
 
 /**
@@ -801,12 +877,12 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
   chatRecentChoices.set(chatId, matchedCompanies);
 
   let msg = `🔍 *Multiple companies found for "${keyword}":*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
   msg += `Kripya neeche di gayi company me se select karein:\n\n`;
 
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
   matchedCompanies.slice(0, 6).forEach((name, i) => {
-    msg += `${i + 1}. *${name}*\n`;
+    msg += `${i + 1}️⃣ *${name}*\n`;
     buttons.push([
       {
         text: `🏢 ${name.length > 30 ? name.slice(0, 27) + '...' : name}`,
@@ -818,14 +894,14 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
   msg += `\n👉 *Tap a button above or reply with the number (\`1\`, \`2\`).*`;
 
   return {
-    text: msg,
+    text: msg.trim(),
     buttons,
   };
 }
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization, firm isolation, and whole-word matching.
+ * Dynamically queries Firestore with strict intent prioritization, firm isolation, month intelligence, and bullet-point layouts.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
@@ -834,6 +910,9 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
   try {
     const firestore = await getAuthenticatedFirestore();
     const activeFirm = await getUserActiveFirm(chatId);
+
+    // Extract target month (e.g., "aug bills", "last month billing", "previous month", etc.)
+    const targetMonth = extractTargetMonth(raw);
 
     // ─── 0. FIRM SELECTION / SWITCHING COMMANDS ────────────────────────────
     if (
@@ -862,7 +941,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       if (index >= 0 && index < choices.length) {
         const selectedCompany = choices[index];
         chatRecentChoices.delete(chatId);
-        return await getCompanyDetailByIntent(selectedCompany, 'all', activeFirm);
+        return await getCompanyDetailByIntent(selectedCompany, 'all', activeFirm, targetMonth);
       }
     }
 
@@ -925,12 +1004,27 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       return await getTodayAttendanceSummary();
     }
 
-    // ─── 7. BILLING / REVENUE / TOTAL SALES ────────────────────────────────
-    if (
-      (hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') || lower.includes('this month') || lower.includes('is mahine')) &&
-      !lower.includes('company')
-    ) {
-      return await getMonthlyBillingSummary(activeFirm);
+    // ─── 7. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
+    // e.g. "billing", "revenue", "previous month billing", "august bills", "last month revenue"
+    const isBillingRequest = (
+      hasWord(lower, 'billing') ||
+      hasWord(lower, 'revenue') ||
+      hasWord(lower, 'turnover') ||
+      lower.includes('total bill') ||
+      (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'collection')))
+    );
+
+    // If no company name is matched in the query, route directly to Monthly Billing Summary
+    if (isBillingRequest) {
+      const companiesSnap = await getDocs(collection(firestore, 'companies'));
+      const hasCompanyInQuery = companiesSnap.docs.some(d => {
+        const cName = String(d.data().name || '').toLowerCase();
+        return cName.length > 2 && lower.includes(cName);
+      });
+
+      if (!hasCompanyInQuery) {
+        return await getMonthlyBillingSummary(activeFirm, targetMonth);
+      }
     }
 
     // ─── 8. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
@@ -942,14 +1036,14 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       }
     }
 
-    // ─── 9. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & DISAMBIGUATION ───
+    // ─── 9. DYNAMIC COMPANY NAME SEARCH WITH INTENT DETECTION & MONTH FILTER ─
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
     let companyIntent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
     if (hasWord(lower, 'pending') || hasWord(lower, 'due') || hasWord(lower, 'balance') || hasWord(lower, 'baki') || hasWord(lower, 'unpaid')) {
       companyIntent = 'pending';
-    } else if (hasWord(lower, 'bill') || hasWord(lower, 'bills') || hasWord(lower, 'invoice') || hasWord(lower, 'invoices') || hasWord(lower, 'billing')) {
+    } else if (hasWord(lower, 'bill') || hasWord(lower, 'bills') || hasWord(lower, 'invoice') || hasWord(lower, 'invoices') || targetMonth !== null) {
       companyIntent = 'bills';
     } else if (hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') || hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machine')) {
       companyIntent = 'forklifts';
@@ -963,7 +1057,9 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       'internationals', 'group', 'india', 'supply', 'chain', 'corp',
       'corporation', 'industries', 'freight', 'logistics', 'logictics',
       'traders', 'trading', 'works', 'company', 'ka', 'ki', 'ke', 'details',
-      'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill'
+      'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill',
+      'last', 'previous', 'month', 'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+      'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
     ]);
 
     for (const companyFullName of allCompanyNames) {
@@ -986,11 +1082,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     }
 
     if (matchedCompanies.length === 1) {
-      return await getCompanyDetailByIntent(matchedCompanies[0], companyIntent, activeFirm);
+      return await getCompanyDetailByIntent(matchedCompanies[0], companyIntent, activeFirm, targetMonth);
     }
 
     if (matchedCompanies.length > 1) {
-      const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai)\b/gi, '').trim() || raw;
+      const matchedKeyword = raw.replace(/\b(ka|ki|ke|pending|bills|bill|invoices|forklifts|details|batao|chahiye|dikhao|kya|hai|last|previous|month|aug|july|june)\b/gi, '').trim() || raw;
       return renderCompanyDisambiguation(matchedKeyword, matchedCompanies, chatId);
     }
 
@@ -1002,7 +1098,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
   // Helpful response
   const activeFirm = await getUserActiveFirm(chatId);
   return {
-    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\nAap ye puch sakte hain:\n\n🏢 *Company Bills / Due:* e.g. _"JSW pending"_, _"Bisleri bills"_\n🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n📅 *Attendance:* e.g. _"Today attendance"_\n💰 *Revenue:* e.g. _"This month billing"_\n\n👇 *Select Active Firm below:*`,
+    text: `🤖 *VE Dashboard Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap ye puch sakte hain:\n\n• 🏢 *Company Details:* e.g. _"Bisleri pending"_, _"Bisleri Aug bills"_\n• 💰 *Monthly Revenue:* e.g. _"Last month billing"_, _"July revenue"_\n• 🚜 *Forklift Fleet:* e.g. _"Workshop"_, _"On-site"_\n• 📅 *Attendance:* e.g. _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
     buttons: renderFirmRadioButtons(activeFirm),
   };
 }
