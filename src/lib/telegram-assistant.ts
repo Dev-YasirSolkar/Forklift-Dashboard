@@ -627,6 +627,54 @@ export async function getCompanyDetailByIntent(
   const firmHeader = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
   const monthHeader = targetMonth ? `📅 Period: *${targetMonth.monthLabel}*\n` : '';
 
+  // ─── 3. USER SPECIFICALLY ASKED FOR PENDING DUE / BALANCE ───────────────
+  if (intent === 'pending') {
+    let text = `🏢 *${company.name.toUpperCase()}*\n`;
+    text += `🏢 Firm Scope: *${firmHeader}*\n`;
+    if (monthHeader) text += monthHeader;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    text += `⚠️ *TOTAL OUTSTANDING DUE: ₹ ${formatInr(totalDue)}*\n\n`;
+
+    text += `💰 *FINANCIAL OVERVIEW:*\n`;
+    text += `• 💎 Total Invoiced: *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
+    text += `• ✅ Total Received: *₹ ${formatInr(totalReceived)}*\n`;
+    if (totalTds > 0) {
+      text += `• 📑 Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+    }
+    if (totalOtherDed > 0) {
+      text += `• 🔻 Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+    }
+    text += `• 📋 Pending Unpaid Bills: *${unpaidInvoices.length} Invoices*\n\n`;
+
+    if (activeFirm === 'Both') {
+      text += `🏭 *ENTERPRISE BREAKDOWN:*\n`;
+      text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
+      text += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*\n\n`;
+    }
+
+    if (company.contactNumber || company.kindAttn) {
+      text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `📞 *Contact Person:* ${company.kindAttn || 'N/A'}\n`;
+      if (company.contactNumber) text += `📱 *Phone:* \`${company.contactNumber}\`\n`;
+    }
+
+    return {
+      text: text.trim(),
+      buttons: [
+        [
+          { text: `📋 View Pending Bills (${unpaidInvoices.length})`, callback_data: `comp_bills:${company.name}` },
+          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+        ],
+        [
+          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+          { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
+  }
+
+  // ─── 4. BILLS / FULL INVOICE BREAKDOWN VIEW ──────────────────────────────
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `🏢 Firm Scope: *${firmHeader}*\n`;
   if (monthHeader) text += monthHeader;
@@ -651,11 +699,8 @@ export async function getCompanyDetailByIntent(
 
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
 
-  const isOnlyPending = intent === 'pending';
-  const displayInvoices = isOnlyPending ? unpaidInvoices : filteredInvoices;
-  const sectionTitle = isOnlyPending 
-    ? `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length}):*` 
-    : `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*`;
+  const displayInvoices = filteredInvoices;
+  const sectionTitle = `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*`;
 
   text += `${sectionTitle}\n\n`;
 
@@ -694,11 +739,10 @@ export async function getCompanyDetailByIntent(
     text: text.trim(),
     buttons: [
       [
-        { text: '⚠️ View Pending Only', callback_data: `comp_pend:${company.name}` },
-        { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
+        { text: '⚠️ View Due Summary', callback_data: `comp_pend:${company.name}` },
+        { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
       ],
       [
-        { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
         { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
       ],
     ],
@@ -1499,10 +1543,35 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     const companiesSnap = await getDocs(collection(firestore, 'companies'));
     const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
+    const isAskingPending = (
+      hasWord(lower, 'pending') ||
+      hasWord(lower, 'due') ||
+      hasWord(lower, 'balance') ||
+      hasWord(lower, 'baki') ||
+      hasWord(lower, 'unpaid') ||
+      lower.includes('kitna paisa') ||
+      lower.includes('paisa baki') ||
+      lower.includes('kitna baki') ||
+      lower.includes('kitna lena') ||
+      lower.includes('balance kitna') ||
+      lower.includes('baki hai')
+    );
+
+    const isAskingBills = (
+      hasWord(lower, 'bills') ||
+      hasWord(lower, 'invoices') ||
+      (hasWord(lower, 'bill') && !isAskingPending) ||
+      (hasWord(lower, 'invoice') && !isAskingPending) ||
+      lower.includes('all bills') ||
+      lower.includes('saare bill') ||
+      lower.includes('bill dikhao') ||
+      targetMonth !== null
+    );
+
     let companyIntent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
-    if (hasWord(lower, 'pending') || hasWord(lower, 'due') || hasWord(lower, 'balance') || hasWord(lower, 'baki') || hasWord(lower, 'unpaid')) {
+    if (isAskingPending) {
       companyIntent = 'pending';
-    } else if (hasWord(lower, 'bill') || hasWord(lower, 'bills') || hasWord(lower, 'invoice') || hasWord(lower, 'invoices') || targetMonth !== null) {
+    } else if (isAskingBills) {
       companyIntent = 'bills';
     } else if (hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') || hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machine')) {
       companyIntent = 'forklifts';
