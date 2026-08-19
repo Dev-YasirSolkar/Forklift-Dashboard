@@ -273,7 +273,7 @@ export async function getForkliftDetail(serialQuery: string): Promise<string> {
 
   const matched = snap.docs.find(d => {
     const sn = String(d.data().serialNumber || '').toLowerCase().trim();
-    return sn.includes(searchLower) || searchLower.includes(sn);
+    return sn === searchLower || sn.includes(searchLower);
   });
 
   if (!matched) {
@@ -400,9 +400,15 @@ export async function listAllCompanies(): Promise<string> {
   return msg;
 }
 
+function hasWord(text: string, word: string): boolean {
+  const cleanWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(^|[^a-zA-Z0-9])${cleanWord}([^a-zA-Z0-9]|$)`, 'i');
+  return regex.test(text);
+}
+
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with multi-layer matching.
+ * Dynamically queries Firestore with strict intent prioritization and whole-word matching.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string): Promise<string> {
   const raw = userPrompt.trim();
@@ -411,56 +417,115 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string): Prom
   try {
     const firestore = await getAuthenticatedFirestore();
 
-    // 1. Check if user is asking for all companies list
+    // ─── 1. ALL COMPANIES LIST ─────────────────────────────────────────────
     if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
       return await listAllCompanies();
     }
 
-    // 2. Dynamic Company Name Search
-    const companiesSnap = await getDocs(collection(firestore, 'companies'));
-    for (const d of companiesSnap.docs) {
-      const companyName = String(d.data().name || '').toLowerCase().trim();
-      if (companyName.length > 2) {
-        const words = companyName.split(/[\s,./()]+/).filter((w: string) => w.length > 2 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise', 'llp', 'and', 'the', 'services', 'solutions', 'international', 'internationals', 'group', 'india'].includes(w));
-        const matched = lower.includes(companyName) || words.some((w: string) => lower.includes(w));
-        if (matched) {
-          return await getCompanyPaymentSummary(String(d.data().name || ''));
-        }
-      }
-    }
-
-    // 3. Forklift Specific Serial Search
-    const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
-    for (const d of forkliftsSnap.docs) {
-      const sn = String(d.data().serialNumber || '').toLowerCase().trim();
-      if (sn.length > 1 && lower.includes(sn)) {
-        return await getForkliftDetail(String(d.data().serialNumber || ''));
-      }
-    }
-
-    // 4. Workshop / Idle Forklifts
-    if (lower.includes('workshop') || lower.includes('idle') || lower.includes('khade') || lower.includes('khada') || lower.includes('available') || lower.includes('godown')) {
+    // ─── 2. WORKSHOP / IDLE FORKLIFTS (Checked BEFORE company search!) ──────
+    if (
+      hasWord(lower, 'workshop') ||
+      hasWord(lower, 'idle') ||
+      hasWord(lower, 'khade') ||
+      hasWord(lower, 'khada') ||
+      hasWord(lower, 'godown') ||
+      lower.includes('workshop forklift') ||
+      lower.includes('workshop me')
+    ) {
       return await getFleetStatus('Workshop');
     }
 
-    // 5. On-Site / Deployed Forklifts
-    if (lower.includes('site') || lower.includes('client') || lower.includes('onsite') || lower.includes('on-site') || lower.includes('deployed') || lower.includes('bahar')) {
+    // ─── 3. ON-SITE / DEPLOYED FORKLIFTS ────────────────────────────────────
+    if (
+      hasWord(lower, 'onsite') ||
+      hasWord(lower, 'on-site') ||
+      hasWord(lower, 'deployed') ||
+      hasWord(lower, 'bahar') ||
+      lower.includes('on site') ||
+      lower.includes('client site')
+    ) {
       return await getFleetStatus('On-Site');
     }
 
-    // 6. Overall Fleet / Machine
-    if (lower.includes('fleet') || lower.includes('forklift') || lower.includes('gaadi') || lower.includes('gadi') || lower.includes('machine') || lower.includes('units')) {
+    // ─── 4. OVERALL FLEET SUMMARY ──────────────────────────────────────────
+    if (
+      hasWord(lower, 'fleet') ||
+      hasWord(lower, 'forklift') ||
+      hasWord(lower, 'forklifts') ||
+      hasWord(lower, 'gadi') ||
+      hasWord(lower, 'gaadi') ||
+      hasWord(lower, 'machines') ||
+      lower.includes('total unit') ||
+      lower.includes('total fleet')
+    ) {
       return await getFleetStatus();
     }
 
-    // 7. Attendance & Staff
-    if (lower.includes('attendance') || lower.includes('absent') || lower.includes('present') || lower.includes('haziri') || lower.includes('chhutti') || lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('staff')) {
+    // ─── 5. ATTENDANCE & STAFF ─────────────────────────────────────────────
+    if (
+      hasWord(lower, 'attendance') ||
+      hasWord(lower, 'absent') ||
+      hasWord(lower, 'present') ||
+      hasWord(lower, 'haziri') ||
+      hasWord(lower, 'chhutti') ||
+      lower.includes('kaun aya') ||
+      lower.includes('kon aya') ||
+      lower.includes('absent staff') ||
+      lower.includes('today attendance')
+    ) {
       return await getTodayAttendanceSummary();
     }
 
-    // 8. Billing / Revenue / Total Sales
-    if (lower.includes('billing') || lower.includes('revenue') || lower.includes('collection') || lower.includes('kamai') || lower.includes('turnover') || lower.includes('total bill') || lower.includes('invoiced')) {
+    // ─── 6. BILLING / REVENUE / TOTAL SALES ────────────────────────────────
+    if (
+      hasWord(lower, 'billing') ||
+      hasWord(lower, 'revenue') ||
+      hasWord(lower, 'collection') ||
+      hasWord(lower, 'turnover') ||
+      lower.includes('total bill') ||
+      lower.includes('this month billing') ||
+      lower.includes('current month bill')
+    ) {
       return await getMonthlyBillingSummary();
+    }
+
+    // ─── 7. FORKLIFT SPECIFIC SERIAL NUMBER SEARCH ─────────────────────────
+    const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
+    for (const d of forkliftsSnap.docs) {
+      const sn = String(d.data().serialNumber || '').trim();
+      if (sn.length >= 2 && hasWord(raw, sn)) {
+        return await getForkliftDetail(sn);
+      }
+    }
+
+    // ─── 8. DYNAMIC COMPANY NAME SEARCH (High Confidence Word Boundary) ────
+    const companiesSnap = await getDocs(collection(firestore, 'companies'));
+    for (const d of companiesSnap.docs) {
+      const companyFullName = String(d.data().name || '').trim();
+      const companyLower = companyFullName.toLowerCase();
+
+      // Check full company name match
+      if (lower.includes(companyLower)) {
+        return await getCompanyPaymentSummary(companyFullName);
+      }
+
+      // Check distinctive brand words (length >= 4 and not generic corporate stop words)
+      const stopWords = new Set([
+        'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
+        'llp', 'and', 'the', 'services', 'solutions', 'international',
+        'internationals', 'group', 'india', 'supply', 'chain', 'corp',
+        'corporation', 'industries', 'freight', 'logistics', 'logictics',
+        'traders', 'trading', 'works', 'company'
+      ]);
+
+      const brandWords = companyLower
+        .split(/[\s,./()]+/)
+        .filter(w => w.length >= 4 && !stopWords.has(w));
+
+      const matchedBrand = brandWords.some(w => hasWord(lower, w));
+      if (matchedBrand) {
+        return await getCompanyPaymentSummary(companyFullName);
+      }
     }
 
   } catch (err: any) {
