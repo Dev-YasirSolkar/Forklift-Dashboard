@@ -2,6 +2,7 @@
  * @fileOverview Smart Telegram Assistant Module
  * Handles natural language querying over Firestore data for Admin & Employees.
  * Formats all data in clean, mobile-friendly bullet points with line breaks (zero ASCII tables).
+ * Shows complete bill parameters: Basic Amount, GST, Grand Total, Received, TDS Deducted, Due & Status.
  * Supports month intelligence: 'previous month', 'last month', 'aug month bills', 'july revenue', etc.
  */
 
@@ -38,7 +39,7 @@ export const ADMIN_SECRET_CODE = '2028';
  * Format currency in Indian number system with commas.
  */
 function formatInr(num: number): string {
-  return num.toLocaleString('en-IN');
+  return Math.round(num || 0).toLocaleString('en-IN');
 }
 
 /**
@@ -66,7 +67,6 @@ function hasWord(text: string, word: string): boolean {
 
 /**
  * Month Parser: Detects mentions of specific or relative months in user prompt.
- * e.g. "aug bills", "august billing", "last month", "previous month", "pichle mahine"
  */
 export function extractTargetMonth(text: string): { monthKey: string; monthLabel: string } | null {
   const lower = text.toLowerCase();
@@ -123,7 +123,6 @@ export function extractTargetMonth(text: string): { monthKey: string; monthLabel
   for (const [mName, mNum] of Object.entries(monthNames)) {
     if (hasWord(lower, mName) || lower.includes(`${mName} month`) || lower.includes(`${mName} bill`)) {
       const mStr = String(mNum).padStart(2, '0');
-      // If the selected month is ahead of current month, assume previous year, else current year
       const y = (mNum > currentMonthIdx + 1) ? (currentYear - 1) : currentYear;
       const d = new Date(y, mNum - 1, 1);
       const label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -313,7 +312,7 @@ export async function registerTelegramAdmin(chatId: string, secretOrEmail: strin
 
 /**
  * Query company details formatted with clean bullet points and line breaks.
- * Supports specific month filtering (e.g. "Bisleri aug bills" / "Bisleri last month").
+ * Shows Summary + Full Detailed Bills with Basic Amount, GST, Grand Total, Received, TDS Deductions & Pending Due.
  */
 export async function getCompanyDetailByIntent(
   companyName: string, 
@@ -400,7 +399,22 @@ export async function getCompanyDetailByIntent(
     return { text: msg };
   }
 
-  const invoiceMap: Record<string, { billNo: number | string; date: string; amount: number; received: number; enterprise: string; billingMonth: string }> = {};
+  interface DetailedInvoice {
+    id: string;
+    billNo: number | string;
+    date: string;
+    billingMonth: string;
+    enterprise: string;
+    netTotal: number;
+    gstAmount: number;
+    grandTotal: number;
+    received: number;
+    tds: number;
+    otherDeductions: number;
+    due: number;
+  }
+
+  const invoiceMap: Record<string, DetailedInvoice> = {};
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
@@ -412,19 +426,27 @@ export async function getCompanyDetailByIntent(
 
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
 
-    // If a month filter is applied, only keep invoices belonging to that month!
     if (targetMonth && bMonth && bMonth !== targetMonth.monthKey) {
       return;
     }
 
     const grandTotal = Number(inv.grandTotal || 0);
+    const netTotal = Number(inv.netTotal || (grandTotal > 0 ? (grandTotal / 1.18) : 0));
+    const gstAmount = Math.max(0, grandTotal - netTotal);
+
     invoiceMap[d.id] = {
+      id: d.id,
       billNo: inv.billNo || 'N/A',
       date: inv.billDate || inv.billingMonth || '',
       billingMonth: bMonth,
-      amount: grandTotal,
-      received: 0,
       enterprise,
+      netTotal,
+      gstAmount,
+      grandTotal,
+      received: 0,
+      tds: 0,
+      otherDeductions: 0,
+      due: grandTotal,
     };
   });
 
@@ -434,7 +456,10 @@ export async function getCompanyDetailByIntent(
       const rec = Number(pay.receivedAmount || 0);
       const tds = Number(pay.tdsDeducted || 0);
       const oth = Number(pay.otherDeductions || 0);
-      invoiceMap[pay.invoiceId].received += (rec + tds + oth);
+      invoiceMap[pay.invoiceId].received += rec;
+      invoiceMap[pay.invoiceId].tds += tds;
+      invoiceMap[pay.invoiceId].otherDeductions += oth;
+      invoiceMap[pay.invoiceId].due = Math.max(0, invoiceMap[pay.invoiceId].grandTotal - (invoiceMap[pay.invoiceId].received + invoiceMap[pay.invoiceId].tds + invoiceMap[pay.invoiceId].otherDeductions));
     }
   });
 
@@ -460,94 +485,87 @@ export async function getCompanyDetailByIntent(
     return billA - billB;
   });
 
-  const unpaidInvoices = filteredInvoices.filter(inv => (inv.amount - inv.received) > 1);
+  const unpaidInvoices = filteredInvoices.filter(inv => inv.due > 1);
+
+  // Totals calculations
+  const totalBilled = filteredInvoices.reduce((s, i) => s + i.grandTotal, 0);
+  const totalBasic = filteredInvoices.reduce((s, i) => s + i.netTotal, 0);
+  const totalGst = filteredInvoices.reduce((s, i) => s + i.gstAmount, 0);
+  const totalReceived = filteredInvoices.reduce((s, i) => s + i.received, 0);
+  const totalTds = filteredInvoices.reduce((s, i) => s + i.tds, 0);
+  const totalOtherDed = filteredInvoices.reduce((s, i) => s + i.otherDeductions, 0);
+  const totalDue = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDed));
 
   const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
   const rvInvoices = filteredInvoices.filter(i => i.enterprise === 'RV');
 
-  const vithalTotal = vithalInvoices.reduce((s, i) => s + i.amount, 0);
-  const vithalRec = vithalInvoices.reduce((s, i) => s + i.received, 0);
-  const vithalDue = Math.max(0, vithalTotal - vithalRec);
+  const vithalTotal = vithalInvoices.reduce((s, i) => s + i.grandTotal, 0);
+  const vithalDue = vithalInvoices.reduce((s, i) => s + i.due, 0);
 
-  const rvTotal = rvInvoices.reduce((s, i) => s + i.amount, 0);
-  const rvRec = rvInvoices.reduce((s, i) => s + i.received, 0);
-  const rvDue = Math.max(0, rvTotal - rvRec);
+  const rvTotal = rvInvoices.reduce((s, i) => s + i.grandTotal, 0);
+  const rvDue = rvInvoices.reduce((s, i) => s + i.due, 0);
 
   const firmHeader = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-  const monthHeader = targetMonth ? `📅 Month: *${targetMonth.monthLabel}*\n` : '';
+  const monthHeader = targetMonth ? `📅 Period: *${targetMonth.monthLabel}*\n` : '';
 
-  // ─── 3. USER SPECIFICALLY ASKED FOR ALL INVOICES HISTORY ─────────────────
-  if (intent === 'bills') {
-    let text = `📄 *ALL INVOICES: ${company.name.toUpperCase()}*\n`;
-    text += `🏢 Firm Scope: *${firmHeader}*\n`;
-    if (monthHeader) text += monthHeader;
-    text += `📊 Total Bills: *${filteredInvoices.length} Invoices*\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    filteredInvoices.forEach((inv, idx) => {
-      const due = inv.amount - inv.received;
-      const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-      const statusEmoji = due <= 1 ? '✅ PAID' : `⏳ DUE ₹${formatInr(due)}`;
-
-      text += `${idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
-      text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-      text += `• 💰 Amount: *₹ ${formatInr(inv.amount)}*\n`;
-      text += `• 🏁 Status: *${statusEmoji}*\n\n`;
-    });
-
-    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `💰 *Total Billed:* *₹ ${formatInr(vithalTotal + rvTotal)}*\n`;
-    text += `⚠️ *Total Due:* *₹ ${formatInr(vithalDue + rvDue)}*\n`;
-
-    return {
-      text: text.trim(),
-      buttons: [
-        [
-          { text: '⚠️ View Pending Only', callback_data: `comp_pend:${company.name}` },
-          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
-        ],
-      ],
-    };
-  }
-
-  // ─── 4. DEFAULT / PENDING DUE VIEW (CLEAN BULLET POINTS) ──────────────────
+  // ─── BUILD RESPONSE TEXT WITH BOTH SUMMARY AND DETAILED BILLS ───────────
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
   text += `🏢 Firm Scope: *${firmHeader}*\n`;
   if (monthHeader) text += monthHeader;
   text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  text += `💰 *FINANCIAL OVERVIEW:*\n`;
+  // 1. Financial Summary Block
+  text += `💰 *FINANCIAL SUMMARY:*\n`;
   if (activeFirm === 'Both') {
     text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
     text += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*\n`;
-    text += `• 💎 *Total Billed:* *₹ ${formatInr(vithalTotal + rvTotal)}*\n`;
-    text += `• ✅ *Total Received:* *₹ ${formatInr(vithalRec + rvRec)}*\n`;
-    text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(vithalDue + rvDue)}*\n\n`;
-  } else {
-    const total = activeFirm === 'RV' ? rvTotal : vithalTotal;
-    const rec = activeFirm === 'RV' ? rvRec : vithalRec;
-    const due = activeFirm === 'RV' ? rvDue : vithalDue;
-
-    text += `• Total Billed: *₹ ${formatInr(total)}*\n`;
-    text += `• Total Received: *₹ ${formatInr(rec)}*\n`;
-    text += `• ⚠️ *OUTSTANDING DUE:* *₹ ${formatInr(due)}*\n\n`;
   }
+  text += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
+  text += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
+  text += `• 💎 *Total Grand Invoiced:* *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
+  text += `• ✅ *Total Received:* *₹ ${formatInr(totalReceived)}*\n`;
+  if (totalTds > 0) {
+    text += `• 📑 *Total TDS Deducted:* *₹ ${formatInr(totalTds)}*\n`;
+  }
+  if (totalOtherDed > 0) {
+    text += `• 🔻 *Other Deductions:* *₹ ${formatInr(totalOtherDed)}*\n`;
+  }
+  text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(totalDue)}*\n\n`;
 
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
 
-  if (unpaidInvoices.length > 0) {
-    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length}):*\n\n`;
-    unpaidInvoices.forEach((inv, idx) => {
-      const due = inv.amount - inv.received;
+  // 2. Individual Bills Detailed Listing (Every bill with Basic, GST, Received, TDS, Due)
+  const isOnlyPending = intent === 'pending';
+  const displayInvoices = isOnlyPending ? unpaidInvoices : filteredInvoices;
+  const sectionTitle = isOnlyPending 
+    ? `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length}):*` 
+    : `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*`;
+
+  text += `${sectionTitle}\n\n`;
+
+  if (displayInvoices.length === 0) {
+    text += `✨ *All invoices for ${firmHeader} are fully settled!* 🎉\n\n`;
+  } else {
+    displayInvoices.forEach((inv, idx) => {
       const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+      const isPaid = inv.due <= 1;
+      const isPartial = !isPaid && inv.received > 0;
+      const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
 
       text += `${idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
       text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-      text += `• 💰 Due Amount: *₹ ${formatInr(due)}*\n`;
-      text += `• 📊 Total Bill: ₹ ${formatInr(inv.amount)}\n\n`;
+      text += `• 💵 Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
+      if (inv.gstAmount > 0) {
+        text += `• 🔖 GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
+      }
+      text += `• 📊 Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+      text += `• 💰 Received: *₹ ${formatInr(inv.received)}*\n`;
+      if (inv.tds > 0) {
+        text += `• 📑 TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
+      }
+      text += `• ⚠️ Outstanding Due: *₹ ${formatInr(inv.due)}*\n`;
+      text += `• 🏁 Status: *${statusTag}*\n\n`;
     });
-  } else {
-    text += `✨ *All invoices for ${firmHeader} are fully paid!* 🎉\n\n`;
   }
 
   if (company.contactNumber || company.kindAttn) {
@@ -560,10 +578,11 @@ export async function getCompanyDetailByIntent(
     text: text.trim(),
     buttons: [
       [
-        { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
-        { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+        { text: '⚠️ View Pending Only', callback_data: `comp_pend:${company.name}` },
+        { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
       ],
       [
+        { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
         { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
       ],
     ],
@@ -780,7 +799,6 @@ export async function getMonthlyBillingSummary(
 ): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
 
-  // If no target month specified, default to current month YYYY-MM
   const monthKey = targetMonth ? targetMonth.monthKey : new Date().toISOString().slice(0, 7);
   const monthLabel = targetMonth 
     ? targetMonth.monthLabel 
@@ -901,7 +919,7 @@ function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[]
 
 /**
  * Comprehensive Smart Natural Language Processor.
- * Dynamically queries Firestore with strict intent prioritization, firm isolation, month intelligence, and bullet-point layouts.
+ * Dynamically queries Firestore with strict intent prioritization, firm isolation, month intelligence, and complete billing parameters.
  */
 export async function processAdminNaturalLanguageQuery(userPrompt: string, chatId: string = ''): Promise<AssistantResponse> {
   const raw = userPrompt.trim();
@@ -1005,7 +1023,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     }
 
     // ─── 7. BILLING / REVENUE / TOTAL SALES (Overall Enterprise Level) ──────
-    // e.g. "billing", "revenue", "previous month billing", "august bills", "last month revenue"
     const isBillingRequest = (
       hasWord(lower, 'billing') ||
       hasWord(lower, 'revenue') ||
@@ -1014,7 +1031,6 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
       (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'collection')))
     );
 
-    // If no company name is matched in the query, route directly to Monthly Billing Summary
     if (isBillingRequest) {
       const companiesSnap = await getDocs(collection(firestore, 'companies'));
       const hasCompanyInQuery = companiesSnap.docs.some(d => {
