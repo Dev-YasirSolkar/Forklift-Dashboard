@@ -2063,6 +2063,11 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   if (matchedCompanies.length === 1) {
     const companyName = matchedCompanies[0];
 
+    const isAskingTable = (
+      hasWord(lower, 'table') || hasWord(lower, 'sheet') || lower.includes('excel') ||
+      lower.includes('ledger') || lower.includes('13 col')
+    );
+
     const isAskingCount = (
       lower.includes('kitne bill') || lower.includes('kitne bills') || lower.includes('kitna bill baki') ||
       lower.includes('kitne invoice') || lower.includes('kitne pending') || lower.includes('how many') ||
@@ -2089,7 +2094,10 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     let specificIntent: IntentType = 'pending_balance';
     let detailLevel: 'summary' | 'detailed' | 'count' = 'summary';
 
-    if (isAskingCount) {
+    if (isAskingTable) {
+      specificIntent = 'billing_table_webapp';
+      detailLevel = 'detailed';
+    } else if (isAskingCount) {
       specificIntent = 'pending_bill_count';
       detailLevel = 'count';
     } else if (isAskingPendingList) {
