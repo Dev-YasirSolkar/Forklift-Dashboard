@@ -16,16 +16,18 @@ import {
   getUserActiveFirm,
   setUserActiveFirm,
   renderFirmRadioButtons,
+  transcribeTelegramVoiceAudio,
   EnterpriseType,
   AssistantResponse,
 } from '@/lib/telegram-assistant';
+import { sendTelegramMessage, sendTelegramPDF, answerTelegramCallback, clearTelegramMessageButtons, dispatchAssistantResponse } from '@/lib/telegram-utils';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 /**
  * @fileOverview Telegram Webhook Handler
- * Supports Admin business queries (Natural Language, Mobile Bullet Points, Inline Radio Buttons) and Employee Salary Slips.
+ * Supports Admin business queries (Natural Language, Voice Notes, Mobile Bullet Points, Inline Radio Buttons) and Employee Salary Slips.
  */
 
 const monthMap: Record<string, string> = {
@@ -63,12 +65,10 @@ export async function POST(req: Request) {
       const messageId = cb.message?.message_id;
 
       if (chatId) {
-        // Automatically remove buttons from the clicked message so user knows it was submitted!
         if (messageId) {
           await clearTelegramMessageButtons(token, chatId, messageId);
         }
 
-        // 1. Firm Radio Button Selection
         if (cbData.startsWith('firm:')) {
           const selectedFirm = cbData.split(':')[1] as EnterpriseType;
           await sendTelegramMessage(token, chatId, `👉 *Selected Firm:* \`${selectedFirm === 'Both' ? 'Both Firms (Vithal + RV)' : selectedFirm}\``);
@@ -78,10 +78,9 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // 2. Pagination Callback Handling
         if (cbData.startsWith('page:')) {
           const parts = cbData.split(':');
-          const pageType = parts[1]; // 'pendlist' | 'bills'
+          const pageType = parts[1];
           const compName = parts[2];
           const pageNum = parseInt(parts[3] || '1', 10);
           const activeFirm = await getUserActiveFirm(chatId);
@@ -95,7 +94,6 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // 3. Company Selection / Intent Buttons
         if (
           cbData.startsWith('comp_select:') || 
           cbData.startsWith('comp_pend:') || 
@@ -103,81 +101,86 @@ export async function POST(req: Request) {
           cbData.startsWith('comp_bills:') || 
           cbData.startsWith('comp_fork:')
         ) {
+          const [prefix, ...compParts] = cbData.split(':');
+          const compName = compParts.join(':');
           const activeFirm = await getUserActiveFirm(chatId);
-          let intent: 'count_pending' | 'pending' | 'pending_list' | 'bills' | 'forklifts' | 'all' = 'all';
-          let compName = '';
-          let actionLabel = '';
 
-          if (cbData.startsWith('comp_select:')) {
-            compName = cbData.replace('comp_select:', '');
-            intent = 'all';
-            actionLabel = `🏢 Selected Company: ${compName}`;
-          } else if (cbData.startsWith('comp_pendlist:')) {
-            compName = cbData.replace('comp_pendlist:', '');
-            intent = 'pending_list';
-            actionLabel = `📋 Kaun Se Bills Pending Hai: ${compName}`;
-          } else if (cbData.startsWith('comp_pend:')) {
-            compName = cbData.replace('comp_pend:', '');
-            intent = 'pending';
-            actionLabel = `⚠️ Due Summary: ${compName}`;
-          } else if (cbData.startsWith('comp_bills:')) {
-            compName = cbData.replace('comp_bills:', '');
-            intent = 'bills';
-            actionLabel = `📄 All Invoices: ${compName}`;
-          } else if (cbData.startsWith('comp_fork:')) {
-            compName = cbData.replace('comp_fork:', '');
-            intent = 'forklifts';
-            actionLabel = `🚜 Site Forklifts: ${compName}`;
-          }
+          let intent: 'all' | 'pending' | 'pending_list' | 'bills' | 'forklifts' = 'all';
+          let actionLabel = '🏢 Company Summary';
+          if (prefix === 'comp_pend') { intent = 'pending'; actionLabel = '⚠️ Outstanding Balance'; }
+          if (prefix === 'comp_pendlist') { intent = 'pending_list'; actionLabel = '📋 Pending Bills List'; }
+          if (prefix === 'comp_bills') { intent = 'bills'; actionLabel = '📄 All Invoices Breakdown'; }
+          if (prefix === 'comp_fork') { intent = 'forklifts'; actionLabel = '🚜 Site Forklifts'; }
 
-          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`${actionLabel}\``);
+          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`${actionLabel} - ${compName}\``);
           const res = await getCompanyDetailByIntent(compName, intent, activeFirm);
-          await answerTelegramCallback(token, callbackId, `Loading ${compName}...`);
-          await dispatchAssistantResponse(token, chatId, res);
-          return NextResponse.json({ ok: true });
-        }
-
-        // 4. Quick Fleet & Pending Shortcuts
-        if (
-          cbData === 'quick:workshop' || 
-          cbData === 'quick:onsite' || 
-          cbData === 'quick:fleet' || 
-          cbData === 'quick:pending' ||
-          cbData === 'quick:month_pending' ||
-          cbData === 'quick:bills'
-        ) {
-          const activeFirm = await getUserActiveFirm(chatId);
-          if (cbData === 'quick:pending') {
-            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Top Pending Debtors\``);
-            const res = await getTopPendingBalances(activeFirm);
-            await answerTelegramCallback(token, callbackId);
-            await dispatchAssistantResponse(token, chatId, res);
-            return NextResponse.json({ ok: true });
-          }
-          if (cbData === 'quick:month_pending') {
-            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Monthly Pending Bills\``);
-            const res = await getMonthlyPendingBills(activeFirm);
-            await answerTelegramCallback(token, callbackId);
-            await dispatchAssistantResponse(token, chatId, res);
-            return NextResponse.json({ ok: true });
-          }
-          if (cbData === 'quick:bills') {
-            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`📊 Monthly Billing Summary\``);
-            const res = await getMonthlyBillingSummary(activeFirm);
-            await answerTelegramCallback(token, callbackId);
-            await dispatchAssistantResponse(token, chatId, res);
-            return NextResponse.json({ ok: true });
-          }
-          const filter = cbData === 'quick:workshop' ? 'Workshop' : cbData === 'quick:onsite' ? 'On-Site' : undefined;
-          const label = filter ? `${filter} Forklifts` : 'Total Fleet Overview';
-          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🚜 ${label}\``);
-          const res = await getFleetStatus(filter, activeFirm);
           await answerTelegramCallback(token, callbackId);
           await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
-        // 5. Firm Selection Menu
+        if (cbData.startsWith('quick:')) {
+          const action = cbData.replace('quick:', '');
+          const activeFirm = await getUserActiveFirm(chatId);
+
+          if (action === 'attendance') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`📅 Today's Attendance\``);
+            const res = await getTodayAttendanceSummary('all');
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'absent') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🔴 Absent Staff List\``);
+            const res = await getTodayAttendanceSummary('absent');
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'fleet') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🚜 Total Fleet Overview\``);
+            const res = await getFleetStatus('All', activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'workshop') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🏭 Workshop Idle Forklifts\``);
+            const res = await getFleetStatus('Workshop', activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'onsite') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`📍 On-Site Deployed Units\``);
+            const res = await getFleetStatus('On-Site', activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'month_billing') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`📊 Current Month Billing\``);
+            const res = await getMonthlyBillingSummary(activeFirm, null, 'summary');
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'month_pending') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Month Pending Invoices\``);
+            const res = await getMonthlyPendingBills(activeFirm, null, 'detailed');
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+          if (action === 'top_debtors') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Top Pending Balances\``);
+            const res = await getTopPendingBalances(activeFirm, 10);
+            await answerTelegramCallback(token, callbackId);
+            await dispatchAssistantResponse(token, chatId, res);
+            return NextResponse.json({ ok: true });
+          }
+        }
+
         if (cbData === 'menu:firm') {
           await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🔄 Change Active Firm Scope\``);
           const res = await renderFirmSelectionMenu(chatId);
@@ -191,18 +194,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ─── B. HANDLE STANDARD CHAT MESSAGES ──────────────────────────────────
+    // ─── B. HANDLE STANDARD CHAT MESSAGES & VOICE AUDIO ───────────────────
     const message = data.message || data.edited_message;
 
-    if (message && message.text && message.chat) {
-      const rawText = message.text.trim();
-      const lowerText = rawText.toLowerCase();
+    if (message && message.chat) {
+      let rawText = (message.text || message.caption || '').trim();
       const chatId = message.chat.id.toString();
       const firstName = message.from?.first_name || 'User';
 
-      // ─── 1. DIRECT PASSCODE / ADMIN UNLOCK (/2028 or 2028) ───────────────
-      const isSecretCode = lowerText === '/2028' || lowerText === '2028' || lowerText.includes('2028');
-      const isAdminCommand = lowerText.startsWith('/admin') || lowerText.startsWith('admin') || lowerText.startsWith('/login');
+      // 🎤 HANDLE TELEGRAM VOICE NOTES & AUDIO MESSAGES DIRECTLY
+      if (!rawText && (message.voice || message.audio)) {
+        const fileId = message.voice?.file_id || message.audio?.file_id;
+        if (fileId) {
+          await sendTelegramMessage(token, chatId, `🎙️ *Voice message sun rahe hain...* ⏳`);
+          const transcribed = await transcribeTelegramVoiceAudio(token, fileId);
+          if (transcribed) {
+            rawText = transcribed.trim();
+            await sendTelegramMessage(token, chatId, `🗣️ *Aapne poocha:* _"${rawText}"_`);
+          } else {
+            await sendTelegramMessage(token, chatId, `⚠️ *Voice message recognize nahi ho saka.* Kripya dobara clear aawaz me bole ya text me likhein.`);
+            return NextResponse.json({ ok: true });
+          }
+        }
+      }
+
+      if (!rawText) {
+        return NextResponse.json({ ok: true });
+      }
+
+      const lowerText = rawText.toLowerCase();
 
       if (isSecretCode || isAdminCommand) {
         const parts = rawText.split(/\s+/);

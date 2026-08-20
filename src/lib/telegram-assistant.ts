@@ -708,8 +708,8 @@ export async function saveGeminiApiKey(apiKey: string): Promise<boolean> {
  * Get Gemini API Key from environment or Firestore.
  */
 export async function getGeminiApiKey(): Promise<string | null> {
-  if (cachedGeminiKey) return cachedGeminiKey;
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  if (cachedGeminiKey) return cachedGeminiKey;
   if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
   if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
@@ -730,6 +730,75 @@ export async function getGeminiApiKey(): Promise<string | null> {
     }
   } catch (err) {
     console.error('Error reading Gemini API key from Firestore:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Transcribe Telegram Voice Note / Audio to Text using Gemini Multimodal Audio API.
+ */
+export async function transcribeTelegramVoiceAudio(token: string, fileId: string): Promise<string | null> {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
+    console.error('No Gemini API key available for voice transcription');
+    return null;
+  }
+
+  try {
+    // 1. Get Telegram file path
+    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    if (!fileRes.ok) return null;
+    const fileJson = await fileRes.json();
+    const filePath = fileJson.result?.file_path;
+    if (!filePath) return null;
+
+    // 2. Download audio binary
+    const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+    if (!audioRes.ok) return null;
+    const arrayBuffer = await audioRes.arrayBuffer();
+    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+
+    const mimeType = filePath.endsWith('.mp3') ? 'audio/mp3' : 'audio/ogg';
+
+    // 3. Multimodal Voice Understanding with Gemini
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest'];
+    for (const model of models) {
+      try {
+        const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: base64Audio,
+                    },
+                  },
+                  {
+                    text: 'Transcribe this spoken Hindi/English/Hinglish audio voice message verbatim into plain text. Only return the transcribed query without preamble, quotes, or markdown formatting.',
+                  },
+                ],
+              },
+            ],
+          }),
+        });
+
+        if (geminiRes.ok) {
+          const resJson = await geminiRes.json();
+          const transcript = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          if (transcript) return transcript;
+        }
+      } catch (mErr) {
+        console.error(`Error transcribing with ${model}:`, mErr);
+      }
+    }
+  } catch (err) {
+    console.error('Error in transcribeTelegramVoiceAudio:', err);
   }
 
   return null;
