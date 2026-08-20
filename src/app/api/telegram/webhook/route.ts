@@ -63,6 +63,11 @@ export async function POST(req: Request) {
       const messageId = cb.message?.message_id;
 
       if (chatId) {
+        // Automatically remove buttons from the clicked message so user knows it was submitted!
+        if (messageId) {
+          await clearTelegramMessageButtons(token, chatId, messageId);
+        }
+
         // 1. Firm Radio Button Selection
         if (cbData.startsWith('firm:')) {
           const selectedFirm = cbData.split(':')[1] as EnterpriseType;
@@ -516,6 +521,22 @@ async function editTelegramMessage(
     });
   } catch (err) {
     console.error('Failed to edit Telegram message:', err);
+  }
+}
+
+async function clearTelegramMessageButtons(token: string, chatId: string, messageId: number) {
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [] },
+      }),
+    });
+  } catch (err) {
+    console.error('Failed to clear Telegram message buttons:', err);
   }
 }
 
