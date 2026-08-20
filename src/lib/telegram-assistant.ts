@@ -1095,11 +1095,33 @@ export async function getCompanyDetailByIntent(
   // ─── 1. FORKLIFTS INTENT ─────────────────────────────────────────────────
   if (intent === 'forklifts') {
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
+    const companyLower = company.name.toLowerCase().trim();
+    const companyTokens = companyLower
+      .split(/[\s,./()_]+/)
+      .filter(w => w.length >= 3 && !['pvt', 'ltd', 'limited', 'private', 'enterprises', 'llp', 'retail', 'industries', 'logistics', 'services'].includes(w));
+
     const companyForklifts = forkliftsSnap.docs
       .map(d => d.data())
       .filter(f => {
-        const site = String(f.siteCompany || '').toLowerCase();
-        return site.includes(company.name.toLowerCase()) || company.name.toLowerCase().includes(site);
+        // Must be currently deployed On-Site
+        if (f.locationType !== 'On-Site') return false;
+
+        const site = String(f.siteCompany || '').toLowerCase().trim();
+        const area = String(f.siteArea || '').toLowerCase().trim();
+        if (!site && !area) return false;
+
+        // Substring / exact match
+        if (site && (site.includes(companyLower) || companyLower.includes(site))) return true;
+        if (area && (area.includes(companyLower) || companyLower.includes(area))) return true;
+
+        // Brand keyword match
+        for (const token of companyTokens) {
+          if (token.length >= 3) {
+            if (site.includes(token) || area.includes(token)) return true;
+          }
+        }
+
+        return false;
       });
 
     const vithalForks = companyForklifts.filter(f => (f.firm || 'Vithal') === 'Vithal');
