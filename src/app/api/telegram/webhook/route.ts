@@ -437,7 +437,7 @@ async function sendTelegramMessage(
   token: string, 
   chatId: string, 
   text: string, 
-  buttons?: Array<Array<{ text: string; callback_data: string }>>
+  buttons?: Array<Array<{ text: string; callback_data?: string; web_app?: { url: string }; url?: string }>>
 ) {
   try {
     const chunks = splitMessageText(text, 3800);

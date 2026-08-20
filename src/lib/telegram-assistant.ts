@@ -25,10 +25,17 @@ import { firebaseConfig } from '@/firebase/config';
 
 export type EnterpriseType = 'Vithal' | 'RV' | 'Both';
 
+export type TelegramButton = {
+  text: string;
+  callback_data?: string;
+  web_app?: { url: string };
+  url?: string;
+};
+
 export interface AssistantResponse {
   text: string;
-  buttons?: Array<Array<{ text: string; callback_data: string }>>;
-  messages?: Array<{ text: string; buttons?: Array<Array<{ text: string; callback_data: string }>> }>;
+  buttons?: Array<Array<TelegramButton>>;
+  messages?: Array<{ text: string; buttons?: Array<Array<TelegramButton>> }>;
 }
 
 export type IntentType =
@@ -37,6 +44,7 @@ export type IntentType =
   | 'pending_bill_list'
   | 'bill_history'
   | 'billing_summary'
+  | 'billing_table_webapp'
   | 'monthly_pending_bills'
   | 'top_debtors'
   | 'all_companies'
@@ -852,6 +860,9 @@ function renderSingleFirmCompanyReport(
       text: text.trim(),
       buttons: [
         [
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+        ],
+        [
           { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
           { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
         ],
@@ -906,8 +917,8 @@ function renderSingleFirmCompanyReport(
       text += `─────────────────────\n\n`;
     }
 
-    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-    const navRow: Array<{ text: string; callback_data: string }> = [];
+    const buttons: Array<Array<TelegramButton>> = [];
+    const navRow: Array<TelegramButton> = [];
 
     if (currentPage > 1) {
       navRow.push({ text: '⬅️ Prev', callback_data: `page:pendlist:${company.name}:${currentPage - 1}` });
@@ -919,6 +930,9 @@ function renderSingleFirmCompanyReport(
       buttons.push(navRow);
     }
 
+    buttons.push([
+      { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+    ]);
     buttons.push([
       { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
       { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
@@ -961,6 +975,9 @@ function renderSingleFirmCompanyReport(
     return {
       text: text.trim(),
       buttons: [
+        [
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+        ],
         [
           { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
           { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
@@ -1019,8 +1036,8 @@ function renderSingleFirmCompanyReport(
     text += `─────────────────────\n\n`;
   });
 
-  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-  const navRow: Array<{ text: string; callback_data: string }> = [];
+  const buttons: Array<Array<TelegramButton>> = [];
+  const navRow: Array<TelegramButton> = [];
 
   if (currentPage > 1) {
     navRow.push({ text: '⬅️ Prev', callback_data: `page:bills:${company.name}:${currentPage - 1}` });
@@ -1032,6 +1049,9 @@ function renderSingleFirmCompanyReport(
     buttons.push(navRow);
   }
 
+  buttons.push([
+    { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+  ]);
   buttons.push([
     { text: '⚠️ View Due Summary', callback_data: `comp_pend:${company.name}` },
     { text: `📋 Only Pending Bills (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
@@ -1795,6 +1815,53 @@ export async function listAllCompanies(): Promise<AssistantResponse> {
 }
 
 /**
+ * Render WebApp Launcher Button for Interactive 13-Column Accounting Billing Table.
+ */
+export function renderBillingWebAppButton(activeFirm: EnterpriseType = 'Both', companyName?: string): AssistantResponse {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://vedashboard.vercel.app';
+  let url = `${baseUrl}/telegram-webapp?firm=${activeFirm}`;
+  if (companyName) {
+    url += `&company=${encodeURIComponent(companyName)}`;
+  }
+
+  let msg = `📊 *INTERACTIVE 13-COLUMN BILLING TABLE*\n`;
+  msg += `🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `Neeche diye button par tap karke aap mobile/tablet/desktop pe **Complete 13-Column Accounting Table** open kar sakte hain:\n\n`;
+  msg += `      1. Bill NO.\n`;
+  msg += `      2. Bill Date\n`;
+  msg += `      3. Month\n`;
+  msg += `      4. Party's Name\n`;
+  msg += `      5. Basic Amount\n`;
+  msg += `      6. CGST\n`;
+  msg += `      7. SGST\n`;
+  msg += `      8. Final Amount\n`;
+  msg += `      9. TDS Deduction\n`;
+  msg += `      10. Amount Receivable\n`;
+  msg += `      11. Payment Received Date\n`;
+  msg += `      12. Actual Amount Received\n`;
+  msg += `      13. RTGS/CHEQUE\n`;
+  msg += `─────────────────────\n\n`;
+  msg += `💡 *Swipe horizontally (left ⇄ right) to view all 13 columns smoothly.*`;
+
+  return {
+    text: msg,
+    buttons: [
+      [
+        {
+          text: '📊 Open Live Billing Sheet (13 Cols) ↗️',
+          web_app: { url },
+        },
+      ],
+      [
+        { text: '⚠️ Top Debtors', callback_data: 'quick:pending' },
+        { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+      ],
+    ],
+  };
+}
+
+/**
  * Disambiguation Helper.
  */
 function renderCompanyDisambiguation(keyword: string, matchedCompanies: string[], chatId: string): AssistantResponse {
@@ -1937,6 +2004,15 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   // 1. Direct Firm Commands
   if (lower === '/firm' || lower === 'firm' || lower === '/switch' || lower === 'switch' || lower === 'change firm') {
     return { intent: 'firm_switch', firm: userActiveFirm, detailLevel: 'summary', confidence: 1.0, rawText: raw };
+  }
+
+  // 1.5. Billing Table WebApp Direct Commands
+  if (
+    lower === '/table' || lower === '/sheet' || lower === '/webapp' || lower === 'table' || lower === 'sheet' ||
+    lower.includes('billing table') || lower.includes('billing sheet') || lower.includes('ledger') ||
+    lower.includes('excel table') || lower.includes('open sheet') || lower.includes('open table')
+  ) {
+    return { intent: 'billing_table_webapp', firm: queryFirm, detailLevel: 'detailed', confidence: 1.0, rawText: raw };
   }
 
   // 2. Casual Conversation
@@ -2258,6 +2334,11 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     // Firm Switch
     if (structured.intent === 'firm_switch') {
       return await renderFirmSelectionMenu(chatId);
+    }
+
+    // Billing Table WebApp
+    if (structured.intent === 'billing_table_webapp') {
+      return renderBillingWebAppButton(structured.firm, structured.entity);
     }
 
     // Casual Greeting
