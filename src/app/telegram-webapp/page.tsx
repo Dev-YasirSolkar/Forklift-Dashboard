@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, query, getDocs, orderBy } from 'firebase/firestore';
@@ -44,9 +44,10 @@ interface BillingRow {
   isPartial: boolean;
 }
 
+// ─── FORMATTING HELPERS ─────────────────────────────────────────────────────
 function formatInr(num: number): string {
-  if (!num && num !== 0) return '0.00';
-  return Number(num).toLocaleString('en-IN', {
+  if (isNaN(num) || num === 0) return '0.00';
+  return num.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -81,6 +82,7 @@ function formatMonthYear(monthStr: string, dateStr: string): string {
 }
 
 export default function TelegramBillingWebApp() {
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<BillingRow[]>([]);
@@ -90,6 +92,20 @@ export default function TelegramBillingWebApp() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
   const [monthFilter, setMonthFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Horizontal Scroll Helpers
+  const scrollTable = (direction: 'left' | 'right') => {
+    if (tableContainerRef.current) {
+      const offset = direction === 'left' ? -400 : 400;
+      tableContainerRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
+
+  const scrollToPosition = (left: number) => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({ left, behavior: 'smooth' });
+    }
+  };
 
   // Telegram WebApp Initialization
   useEffect(() => {
@@ -582,12 +598,85 @@ export default function TelegramBillingWebApp() {
       <section className="max-w-[1920px] mx-auto px-4 sm:px-6">
         <div className="bg-white rounded-lg shadow-md border border-slate-300 overflow-hidden">
           
+          {/* Horizontal Scroll Quick Control Toolbar */}
+          <div className="bg-slate-800 text-white px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-700 select-none">
+            <div className="flex items-center gap-2 text-xs font-semibold">
+              <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[11px] font-bold">
+                ↔️ HORIZONTAL SCROLL
+              </span>
+              <span className="text-slate-300 text-[11px]">
+                Swipe left ⇄ right to view all 13 columns:
+              </span>
+            </div>
+
+            {/* Column Jump Chips & Left / Right Scroll Buttons */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1 text-[11px]">
+                <button
+                  onClick={() => scrollToPosition(0)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200"
+                  title="Jump to Bill No"
+                >
+                  1. Bill#
+                </button>
+                <button
+                  onClick={() => scrollToPosition(260)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200"
+                  title="Jump to Party Name"
+                >
+                  4. Party
+                </button>
+                <button
+                  onClick={() => scrollToPosition(650)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200"
+                  title="Jump to Final Amount"
+                >
+                  8. Final Amt
+                </button>
+                <button
+                  onClick={() => scrollToPosition(920)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200"
+                  title="Jump to Amount Receivable"
+                >
+                  10. Receivable
+                </button>
+                <button
+                  onClick={() => scrollToPosition(1350)}
+                  className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200"
+                  title="Jump to RTGS / Cheque"
+                >
+                  13. RTGS
+                </button>
+              </div>
+
+              {/* Smooth Left & Right Scroll Buttons */}
+              <div className="flex items-center gap-1 ml-1">
+                <button
+                  onClick={() => scrollTable('left')}
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 shadow transition active:scale-95 cursor-pointer"
+                  title="Scroll Left"
+                >
+                  ◀️ Left
+                </button>
+                <button
+                  onClick={() => scrollTable('right')}
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 shadow transition active:scale-95 cursor-pointer"
+                  title="Scroll Right"
+                >
+                  Right ▶️
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Scrollable Container with Smooth Touch Scrolling */}
           <div 
-            className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-100"
+            ref={tableContainerRef}
+            className="w-full overflow-x-auto scroll-smooth scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-100"
             style={{ 
               WebkitOverflowScrolling: 'touch',
-              maxWidth: '100%' 
+              maxWidth: '100%',
+              overscrollBehaviorX: 'contain',
             }}
           >
             {loading ? (
@@ -642,7 +731,16 @@ export default function TelegramBillingWebApp() {
                       borderBottom: '2px solid #0f172a'
                     }}
                   >
-                    <th style={thStyle({ align: 'center', width: '90px' })}>1. Bill NO.</th>
+                    <th style={{
+                      ...thStyle({ align: 'center', width: '95px' }),
+                      position: 'sticky',
+                      left: 0,
+                      zIndex: 20,
+                      backgroundColor: '#0f172a',
+                      boxShadow: '2px 0 4px rgba(0,0,0,0.15)',
+                    }}>
+                      1. Bill NO.
+                    </th>
                     <th style={thStyle({ align: 'center', width: '105px' })}>2. Bill Date</th>
                     <th style={thStyle({ align: 'center', width: '120px' })}>3. Month</th>
                     <th style={thStyle({ align: 'left', minWidth: '220px' })}>4. Party&apos;s Name</th>
@@ -675,8 +773,15 @@ export default function TelegramBillingWebApp() {
                         }}
                         className="hover:bg-blue-50/70 transition-colors"
                       >
-                        {/* 1. Bill NO. */}
-                        <td style={tdStyle({ align: 'center', weight: '700' })}>
+                        {/* 1. Bill NO. (Sticky on Left during horizontal scroll) */}
+                        <td style={{
+                          ...tdStyle({ align: 'center', weight: '700' }),
+                          position: 'sticky',
+                          left: 0,
+                          zIndex: 10,
+                          backgroundColor: rowBg,
+                          boxShadow: '2px 0 4px rgba(0,0,0,0.06)',
+                        }}>
                           <div className="flex items-center justify-center gap-1.5">
                             <span
                               style={{
@@ -706,9 +811,11 @@ export default function TelegramBillingWebApp() {
 
                         {/* 4. Party's Name */}
                         <td style={tdStyle({ align: 'left', weight: '600' })}>
-                          <div className="leading-snug">
-                            <span>{row.partyName}</span>
-                            <span className="block text-[10px] text-slate-500 font-normal">
+                          <div className="flex flex-col">
+                            <span className="truncate max-w-[280px]" title={row.partyName}>
+                              {row.partyName}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-normal">
                               {row.enterprise === 'RV' ? '🏢 R.V Enterprises' : '🏭 Vithal Enterprises'}
                             </span>
                           </div>
@@ -792,7 +899,16 @@ export default function TelegramBillingWebApp() {
                       borderTop: '2px solid #0f172a',
                     }}
                   >
-                    <td style={tfootStyle({ align: 'center' })}>TOTAL</td>
+                    <td style={{
+                      ...tfootStyle({ align: 'center' }),
+                      position: 'sticky',
+                      left: 0,
+                      zIndex: 20,
+                      backgroundColor: '#0f172a',
+                      boxShadow: '2px 0 4px rgba(0,0,0,0.15)',
+                    }}>
+                      TOTAL
+                    </td>
                     <td style={tfootStyle({ align: 'center' })}>-</td>
                     <td style={tfootStyle({ align: 'center' })}>-</td>
                     <td style={tfootStyle({ align: 'left' })}>
