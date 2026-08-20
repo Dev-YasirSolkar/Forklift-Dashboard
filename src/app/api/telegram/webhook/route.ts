@@ -9,6 +9,7 @@ import {
   getFleetStatus,
   getTodayAttendanceSummary,
   getMonthlyBillingSummary,
+  getMonthlyPendingBills,
   getTopPendingBalances,
   getAuthenticatedFirestore,
   renderFirmSelectionMenu,
@@ -78,14 +79,23 @@ export async function POST(req: Request) {
         }
 
         // 2. Company Selection / Intent Buttons
-        if (cbData.startsWith('comp_select:') || cbData.startsWith('comp_pend:') || cbData.startsWith('comp_bills:') || cbData.startsWith('comp_fork:')) {
+        if (
+          cbData.startsWith('comp_select:') || 
+          cbData.startsWith('comp_pend:') || 
+          cbData.startsWith('comp_pendlist:') || 
+          cbData.startsWith('comp_bills:') || 
+          cbData.startsWith('comp_fork:')
+        ) {
           const activeFirm = await getUserActiveFirm(chatId);
-          let intent: 'pending' | 'bills' | 'forklifts' | 'all' = 'all';
+          let intent: 'count_pending' | 'pending' | 'pending_list' | 'bills' | 'forklifts' | 'all' = 'all';
           let compName = '';
 
           if (cbData.startsWith('comp_select:')) {
             compName = cbData.replace('comp_select:', '');
             intent = 'all';
+          } else if (cbData.startsWith('comp_pendlist:')) {
+            compName = cbData.replace('comp_pendlist:', '');
+            intent = 'pending_list';
           } else if (cbData.startsWith('comp_pend:')) {
             compName = cbData.replace('comp_pend:', '');
             intent = 'pending';
@@ -104,10 +114,29 @@ export async function POST(req: Request) {
         }
 
         // 3. Quick Fleet & Pending Shortcuts
-        if (cbData === 'quick:workshop' || cbData === 'quick:onsite' || cbData === 'quick:fleet' || cbData === 'quick:pending') {
+        if (
+          cbData === 'quick:workshop' || 
+          cbData === 'quick:onsite' || 
+          cbData === 'quick:fleet' || 
+          cbData === 'quick:pending' ||
+          cbData === 'quick:month_pending' ||
+          cbData === 'quick:bills'
+        ) {
           const activeFirm = await getUserActiveFirm(chatId);
           if (cbData === 'quick:pending') {
             const res = await getTopPendingBalances(activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            return NextResponse.json({ ok: true });
+          }
+          if (cbData === 'quick:month_pending') {
+            const res = await getMonthlyPendingBills(activeFirm);
+            await answerTelegramCallback(token, callbackId);
+            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            return NextResponse.json({ ok: true });
+          }
+          if (cbData === 'quick:bills') {
+            const res = await getMonthlyBillingSummary(activeFirm);
             await answerTelegramCallback(token, callbackId);
             await sendTelegramMessage(token, chatId, res.text, res.buttons);
             return NextResponse.json({ ok: true });
