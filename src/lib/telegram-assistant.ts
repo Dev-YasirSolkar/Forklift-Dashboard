@@ -6,7 +6,8 @@
  * 2. Structured Intent & Entity Parsing (Deterministic + Gemini NLU JSON extraction).
  * 3. 100% Deterministic Financial & Business Calculations (Zero hallucination).
  * 4. Multi-Firm Strict Isolation (Vithal vs RV vs Both with full breakdown).
- * 5. Mobile-Optimized Formatter with Line Breaks, Emojis, and Interactive Pagination.
+ * 5. Transparent Account Summary (Total Invoices vs Paid Invoices vs Unpaid Bills).
+ * 6. Mobile-Optimized Formatter with Line Breaks, Emojis, and Interactive Pagination.
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -195,7 +196,10 @@ export function calculateInvoiceDue(
   const enterprise: 'Vithal' | 'RV' = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
   const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
 
-  const payData = paymentsByInvoice[invoiceId] || { received: 0, tds: 0, otherDeductions: 0 };
+  // Look up payments by invoice document ID or bill number string
+  const billKey = String(inv.billNo || '');
+  const payData = paymentsByInvoice[invoiceId] || paymentsByInvoice[billKey] || { received: 0, tds: 0, otherDeductions: 0 };
+  
   const advanceReceived = Number(inv.advanceReceived || 0);
   const totalReceived = payData.received + advanceReceived;
   const totalDeductions = payData.otherDeductions;
@@ -214,6 +218,8 @@ export function calculateInvoiceDue(
   const totalCredited = totalReceived + totalDeductions + totalTds;
   const rawBalance = grandTotal - totalCredited;
   const finalBalance = Math.max(0, Math.round(rawBalance));
+  
+  // An invoice is considered fully paid if remaining balance is <= 1 (accounting for minor paise rounding)
   const isPaid = finalBalance <= 1;
 
   return {
@@ -618,12 +624,13 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
   paymentsSnap.docs.forEach(d => {
     const pay = d.data();
     if (pay.invoiceId) {
-      if (!paymentsByInvoice[pay.invoiceId]) {
-        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      const invKey = String(pay.invoiceId);
+      if (!paymentsByInvoice[invKey]) {
+        paymentsByInvoice[invKey] = { received: 0, tds: 0, otherDeductions: 0 };
       }
-      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
-      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
-      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+      paymentsByInvoice[invKey].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[invKey].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[invKey].otherDeductions += Number(pay.otherDeductions || 0);
     }
   });
 
@@ -784,12 +791,13 @@ export async function getCompanyDetailByIntent(
   paymentsSnap.docs.forEach(d => {
     const pay = d.data();
     if (pay.invoiceId) {
-      if (!paymentsByInvoice[pay.invoiceId]) {
-        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      const invKey = String(pay.invoiceId);
+      if (!paymentsByInvoice[invKey]) {
+        paymentsByInvoice[invKey] = { received: 0, tds: 0, otherDeductions: 0 };
       }
-      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
-      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
-      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+      paymentsByInvoice[invKey].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[invKey].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[invKey].otherDeductions += Number(pay.otherDeductions || 0);
     }
   });
 
@@ -831,6 +839,7 @@ export async function getCompanyDetailByIntent(
     return billA - billB;
   });
 
+  const paidInvoices = filteredInvoices.filter(inv => inv.isPaid);
   const unpaidInvoices = filteredInvoices.filter(inv => !inv.isPaid);
 
   const totalBilled = filteredInvoices.reduce((s, i) => s + i.grandTotal, 0);
@@ -864,11 +873,16 @@ export async function getCompanyDetailByIntent(
     text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (unpaidInvoices.length === 0) {
-      text += `✨ *Total Pending Bills: 0 (Zero)* 🎉\n`;
-      text += `• Is company ke saare bills fully clear & settled hain!\n\n`;
+      text += `✨ *Pending Bills: 0 (Zero)* 🎉\n`;
+      text += `• Is company ke saare ${filteredInvoices.length} bills fully clear & settled hain!\n\n`;
     } else {
-      text += `📊 *PENDING BILLS COUNT: ${unpaidInvoices.length} INVOICES*\n`;
+      text += `📊 *PENDING UNPAID BILLS: ${unpaidInvoices.length} INVOICES*\n`;
       text += `⚠️ *Total Outstanding Balance: ₹ ${formatInr(totalDue)}*\n\n`;
+
+      text += `💰 *ACCOUNT BREAKDOWN:*\n`;
+      text += `• 💎 Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+      text += `• ✅ Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+      text += `• ⏳ Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
 
       if (activeFirm === 'Both') {
         const firmLines: string[] = [];
@@ -879,13 +893,12 @@ export async function getCompanyDetailByIntent(
           firmLines.push(`• 🏢 R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})`);
         }
         if (firmLines.length > 0) {
-          text += `💰 *Firm Breakdown:*\n${firmLines.join('\n')}\n\n`;
+          text += `🏭 *Enterprise Breakdown:*\n${firmLines.join('\n')}\n\n`;
         }
       }
     }
 
-    text += `💎 *Overall:* Total Invoiced ₹ ${formatInr(totalBilled)} | Received ₹ ${formatInr(totalReceived)}\n\n`;
-    text += `👉 _Agar bills dekhna chahte hain toh neeche button tap karein:_`;
+    text += `👉 _Agar bills ki list dekhna chahte hain toh neeche button tap karein:_`;
 
     return {
       text: text.trim(),
@@ -911,13 +924,13 @@ export async function getCompanyDetailByIntent(
     const pagedInvoices = unpaidInvoices.slice(startIndex, startIndex + PAGE_SIZE);
 
     let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length})*\n`;
+    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length} of ${filteredInvoices.length} Total)*\n`;
     text += `🏢 Scope: *${firmHeader}* (Page ${currentPage}/${totalPages})\n`;
     if (monthHeader) text += monthHeader;
     text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (unpaidInvoices.length === 0) {
-      text += `✨ *No pending bills! All invoices are fully paid.* 🎉\n\n`;
+      text += `✨ *No pending bills! All ${filteredInvoices.length} invoices are fully paid.* 🎉\n\n`;
     } else {
       pagedInvoices.forEach((inv, idx) => {
         const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
@@ -981,23 +994,24 @@ export async function getCompanyDetailByIntent(
     text += `⚠️ *TOTAL OUTSTANDING DUE: ₹ ${formatInr(totalDue)}*\n\n`;
 
     text += `💰 *FINANCIAL OVERVIEW:*\n`;
-    text += `• 💎 Total Invoiced: *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
-    text += `• ✅ Total Received: *₹ ${formatInr(totalReceived)}*\n`;
+    text += `• 💎 Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+    text += `• ✅ Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+    text += `• ⏳ Unpaid / Pending Bills: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n`;
     if (totalTds > 0) {
       text += `• 📑 Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
     }
     if (totalOtherDed > 0) {
       text += `• 🔻 Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
     }
-    text += `• 📋 Pending Unpaid Bills: *${unpaidInvoices.length} Invoices*\n\n`;
+    text += `\n`;
 
     if (activeFirm === 'Both') {
       const firmLines: string[] = [];
       if (vithalDue > 0 || vithalTotal > 0) {
-        firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
+        firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}* (${vithalUnpaid.length} Pending)`);
       }
       if (rvDue > 0 || rvTotal > 0) {
-        firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
+        firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}* (${rvUnpaid.length} Pending)`);
       }
       if (firmLines.length > 0) {
         text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
@@ -1053,14 +1067,14 @@ export async function getCompanyDetailByIntent(
   text += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
   text += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
   text += `• 💎 *Total Grand Invoiced:* *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
-  text += `• ✅ *Total Received:* *₹ ${formatInr(totalReceived)}*\n`;
+  text += `• ✅ *Total Received:* *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Bills Settled)\n`;
   if (totalTds > 0) {
     text += `• 📑 *Total TDS Deducted:* *₹ ${formatInr(totalTds)}*\n`;
   }
   if (totalOtherDed > 0) {
     text += `• 🔻 *Other Deductions:* *₹ ${formatInr(totalOtherDed)}*\n`;
   }
-  text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(totalDue)}*\n\n`;
+  text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(totalDue)}* (${unpaidInvoices.length} Bills Pending)\n\n`;
 
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
   text += `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*\n\n`;
@@ -1374,12 +1388,13 @@ export async function getMonthlyBillingSummary(
   paymentsSnap.docs.forEach(d => {
     const pay = d.data();
     if (pay.invoiceId) {
-      if (!paymentsByInvoice[pay.invoiceId]) {
-        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      const invKey = String(pay.invoiceId);
+      if (!paymentsByInvoice[invKey]) {
+        paymentsByInvoice[invKey] = { received: 0, tds: 0, otherDeductions: 0 };
       }
-      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
-      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
-      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+      paymentsByInvoice[invKey].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[invKey].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[invKey].otherDeductions += Number(pay.otherDeductions || 0);
     }
   });
 
@@ -1528,12 +1543,13 @@ export async function getMonthlyPendingBills(
   paymentsSnap.docs.forEach(d => {
     const pay = d.data();
     if (pay.invoiceId) {
-      if (!paymentsByInvoice[pay.invoiceId]) {
-        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      const invKey = String(pay.invoiceId);
+      if (!paymentsByInvoice[invKey]) {
+        paymentsByInvoice[invKey] = { received: 0, tds: 0, otherDeductions: 0 };
       }
-      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
-      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
-      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+      paymentsByInvoice[invKey].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[invKey].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[invKey].otherDeductions += Number(pay.otherDeductions || 0);
     }
   });
 
