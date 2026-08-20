@@ -6,8 +6,11 @@
  * 2. Structured Intent & Entity Parsing (Deterministic + Gemini NLU JSON extraction).
  * 3. 100% Deterministic Financial & Business Calculations (Zero hallucination).
  * 4. Multi-Firm Strict Isolation (Vithal vs RV vs Both with full breakdown).
- * 5. Transparent Account Summary (Total Invoices vs Paid Invoices vs Unpaid Bills).
- * 6. Mobile-Optimized Formatter with Line Breaks, Emojis, and Interactive Pagination.
+ * 5. Formatting Standards:
+ *    - Bill Numbers displayed with enterprise suffix: e.g. "1571-MHE" (not just #1571).
+ *    - Icons / Emojis used ONLY in Main Titles & Section Headers.
+ *    - Body items formatted as clean indented bullet points ("  • ").
+ *    - Horizontal Pending Bill Numbers ("  👉 `1544-MHE`  •  `1569-MHE`").
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -73,6 +76,7 @@ export interface ProcessedInvoiceData {
   companyId: string;
   companyName: string;
   billNo: number | string;
+  billNoFormatted: string; // e.g. "1571-MHE"
   date: string;
   billingMonth: string;
   enterprise: 'Vithal' | 'RV';
@@ -196,6 +200,11 @@ export function calculateInvoiceDue(
   const enterprise: 'Vithal' | 'RV' = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
   const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
 
+  // Format bill number with enterprise suffix: e.g. "1571-MHE"
+  const defaultSuffix = enterprise === 'RV' ? 'RV' : 'MHE';
+  const billSuffix = inv.billNoSuffix || defaultSuffix;
+  const billNoFormatted = inv.billNo ? `${inv.billNo}-${billSuffix}` : 'N/A';
+
   // Look up payments by invoice document ID or bill number string
   const billKey = String(inv.billNo || '');
   const payData = paymentsByInvoice[invoiceId] || paymentsByInvoice[billKey] || { received: 0, tds: 0, otherDeductions: 0 };
@@ -219,7 +228,7 @@ export function calculateInvoiceDue(
   const rawBalance = grandTotal - totalCredited;
   const finalBalance = Math.max(0, Math.round(rawBalance));
   
-  // An invoice is considered fully paid if remaining balance is <= 1 (accounting for minor paise rounding)
+  // An invoice is considered fully paid if remaining balance is <= 1
   const isPaid = finalBalance <= 1;
 
   return {
@@ -227,6 +236,7 @@ export function calculateInvoiceDue(
     companyId: inv.companyId || '',
     companyName,
     billNo: inv.billNo || 'N/A',
+    billNoFormatted,
     date: inv.billDate || inv.billingMonth || '',
     billingMonth: bMonth,
     enterprise,
@@ -405,9 +415,10 @@ export async function setUserActiveFirm(chatId: string, firm: EnterpriseType): P
       ? '🏢 R.V ENTERPRISES' 
       : '🌐 BOTH FIRMS (Vithal + RV)';
 
-  let msg = `✅ *Active Firm Updated:*\n*${label}*\n`;
+  let msg = `✅ *ACTIVE FIRM UPDATED*\n`;
+  msg += `🏢 Scope: *${label}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `Ab saare bills, fleet aur revenue reports **${label}** ke hisaab se aayenge.\n\n`;
+  msg += `  • Ab saare bills, fleet aur revenue reports **${label}** ke hisaab se aayenge.\n\n`;
   msg += `_Firm change karne ke liye neeche button tap karein:_`;
 
   return {
@@ -450,9 +461,9 @@ export async function renderFirmSelectionMenu(chatId: string): Promise<Assistant
   let msg = `🏢 *SELECT ACTIVE FIRM / ENTERPRISE*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
   msg += `Kripya apni active firm select karein:\n\n`;
-  msg += `• *Vithal Enterprises:* Sirf Vithal ke bills aur fleet\n`;
-  msg += `• *R.V Enterprises:* Sirf RV ke bills aur fleet\n`;
-  msg += `• *Both Firms:* Vithal aur RV dono ka alag-alag breakdown\n\n`;
+  msg += `  • *Vithal Enterprises:* Sirf Vithal ke bills aur fleet\n`;
+  msg += `  • *R.V Enterprises:* Sirf RV ke bills aur fleet\n`;
+  msg += `  • *Both Firms:* Vithal aur RV dono ka alag-alag breakdown\n\n`;
   msg += `👇 *Tap a button below to select:*`;
 
   return {
@@ -591,7 +602,7 @@ export async function testGeminiConnection(): Promise<string> {
       if (res.ok) {
         const json = await res.json();
         const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        return `✅ *Gemini AI is Fully Connected & Active!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\n• 🔑 API Key: \`${maskedKey}\`\n• 🚀 Model: \`${model}\`\n• ⚡ Response: "${text.trim()}"\n\nAb aap natural Hindi/Hinglish/English me koi bhi sawal pooch sakte hain!`;
+        return `✅ *Gemini AI is Fully Connected & Active!* 🤖\n━━━━━━━━━━━━━━━━━━━━━\n  • API Key: \`${maskedKey}\`\n  • Model: \`${model}\`\n  • Response: "${text.trim()}"\n\nAb aap natural Hindi/Hinglish/English me koi bhi sawal pooch sakte hain!`;
       } else {
         const errText = await res.text();
         errors.push(`${model} (HTTP ${res.status}): ${errText.slice(0, 100)}`);
@@ -662,10 +673,11 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
   const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
   let msg = `⚠️ *TOP OUTSTANDING DUE RANKING*\n`;
-  msg += `🏢 Firm Scope: *${firmLabel}*\n`;
+  msg += `🏢 Scope: *${firmLabel}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `💎 *Total Market Outstanding:* *₹ ${formatInr(totalOutstanding)}*\n`;
-  msg += `👥 *Companies with Pending Balance:* *${sortedDebtors.length} Clients*\n\n`;
+  msg += `💰 *MARKET SUMMARY:*\n`;
+  msg += `  • Total Market Outstanding: *₹ ${formatInr(totalOutstanding)}*\n`;
+  msg += `  • Total Debtors: *${sortedDebtors.length} Clients*\n\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `📊 *TOP ${Math.min(limitCount, sortedDebtors.length)} PENDING CLIENTS:*\n\n`;
 
@@ -673,8 +685,8 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
 
   sortedDebtors.slice(0, limitCount).forEach((c, idx) => {
     msg += `${idx + 1}️⃣ *${c.name}*\n`;
-    msg += `• ⚠️ Pending Due: *₹ ${formatInr(c.due)}* (${c.pendingBillsCount} Bills)\n`;
-    msg += `• 💰 Total Billed: ₹ ${formatInr(c.billed)} | Received: ₹ ${formatInr(c.received)}\n\n`;
+    msg += `  • Pending Due: *₹ ${formatInr(c.due)}* (${c.pendingBillsCount} Bills)\n`;
+    msg += `  • Total Billed: ₹ ${formatInr(c.billed)} | Received: ₹ ${formatInr(c.received)}\n\n`;
 
     if (idx < 5) {
       buttons.push([
@@ -739,7 +751,7 @@ export async function getCompanyDetailByIntent(
 
     const firmTag = activeFirm === 'Both' ? 'Vithal & RV' : activeFirm;
     let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()}*\n`;
-    msg += `🏢 Firm Scope: *${firmTag}* (${companyForklifts.length} Units)\n`;
+    msg += `🏢 Scope: *${firmTag}* (${companyForklifts.length} Units)\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (companyForklifts.length === 0) {
@@ -748,10 +760,10 @@ export async function getCompanyDetailByIntent(
       companyForklifts.forEach((f, idx) => {
         const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
         msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
-        msg += `• 🚜 Model: *${f.make || ''} ${f.model || ''}*\n`;
-        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
-        if (f.siteArea) msg += `• 📍 Site Area: *${f.siteArea}*\n`;
-        if (f.siteContactPerson) msg += `• 👤 Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+        msg += `  • Model: *${f.make || ''} ${f.model || ''}*\n`;
+        msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
+        if (f.siteArea) msg += `  • Site Area: *${f.siteArea}*\n`;
+        if (f.siteContactPerson) msg += `  • Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
         msg += `\n`;
       });
     }
@@ -780,10 +792,10 @@ export async function getCompanyDetailByIntent(
   if (invoicesSnap.empty) {
     let msg = `🏢 *${company.name.toUpperCase()}*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    msg += `📌 *Status:* No invoices recorded yet in dashboard.\n`;
-    if (company.gstin) msg += `• 🔖 GSTIN: \`${company.gstin}\`\n`;
-    if (company.kindAttn) msg += `• 👤 Attn: *${company.kindAttn}*\n`;
-    if (company.contactNumber) msg += `• 📞 Phone: *${company.contactNumber}*\n`;
+    msg += `  • Status: No invoices recorded yet in dashboard.\n`;
+    if (company.gstin) msg += `  • GSTIN: \`${company.gstin}\`\n`;
+    if (company.kindAttn) msg += `  • Attn: *${company.kindAttn}*\n`;
+    if (company.contactNumber) msg += `  • Phone: *${company.contactNumber}*\n`;
     return { text: msg };
   }
 
@@ -868,37 +880,37 @@ export async function getCompanyDetailByIntent(
   // ─── 3. COUNT ONLY VIEW ("kitne bills pending hai") ──────────────────────
   if (intent === 'count_pending') {
     let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `🏢 Firm Scope: *${firmHeader}*\n`;
+    text += `🏢 Scope: *${firmHeader}*\n`;
     if (monthHeader) text += monthHeader;
     text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (unpaidInvoices.length === 0) {
       text += `✨ *Pending Bills: 0 (Zero)* 🎉\n`;
-      text += `• Is company ke saare ${filteredInvoices.length} bills fully clear & settled hain!\n\n`;
+      text += `  • Is company ke saare ${filteredInvoices.length} bills fully clear & settled hain!\n\n`;
     } else {
       text += `📊 *PENDING UNPAID BILLS: ${unpaidInvoices.length} INVOICES*\n`;
-      text += `⚠️ *Total Outstanding Balance: ₹ ${formatInr(totalDue)}*\n\n`;
+      text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
 
       text += `💰 *ACCOUNT BREAKDOWN:*\n`;
-      text += `• 💎 Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
-      text += `• ✅ Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
-      text += `• ⏳ Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
+      text += `  • Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+      text += `  • Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+      text += `  • Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
 
       if (unpaidInvoices.length > 0) {
-        const billNoTags = unpaidInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
-        text += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+        const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+        text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
       }
 
       if (activeFirm === 'Both') {
         const firmLines: string[] = [];
         if (vithalUnpaid.length > 0 || vithalDue > 0) {
-          firmLines.push(`• 🏭 Vithal Enterprises: *${vithalUnpaid.length} Bills Pending* (Due ₹ ${formatInr(vithalDue)})`);
+          firmLines.push(`  • Vithal Enterprises: *${vithalUnpaid.length} Bills Pending* (Due ₹ ${formatInr(vithalDue)})`);
         }
         if (rvUnpaid.length > 0 || rvDue > 0) {
-          firmLines.push(`• 🏢 R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})`);
+          firmLines.push(`  • R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})`);
         }
         if (firmLines.length > 0) {
-          text += `🏭 *Enterprise Breakdown:*\n${firmLines.join('\n')}\n\n`;
+          text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
         }
       }
     }
@@ -942,18 +954,21 @@ export async function getCompanyDetailByIntent(
         const isPartial = inv.received > 0;
         const statusTag = isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
 
-        text += `${startIndex + idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
-        text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-        text += `• 📊 Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-        text += `• 💰 Received: *₹ ${formatInr(inv.received)}*`;
+        text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}* (${firm})\n`;
+        text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+        text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+        text += `  • Received: *₹ ${formatInr(inv.received)}*`;
         if (inv.tds > 0) text += ` (TDS: ₹ ${formatInr(inv.tds)})`;
         text += `\n`;
-        text += `• ⚠️ Pending Due: *₹ ${formatInr(inv.due)}*\n`;
-        text += `• 🏁 Status: *${statusTag}*\n\n`;
+        text += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
+        text += `  • Status: ${statusTag}\n\n`;
       });
 
       text += `━━━━━━━━━━━━━━━━━━━━━\n`;
       text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
+
+      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+      text += `📋 *ALL PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
     }
 
     if (company.contactNumber || company.kindAttn) {
@@ -992,36 +1007,36 @@ export async function getCompanyDetailByIntent(
   // ─── 5. PENDING BALANCE SUMMARY VIEW ("kitna paisa baki hai") ────────────
   if (intent === 'pending') {
     let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `🏢 Firm Scope: *${firmHeader}*\n`;
+    text += `🏢 Scope: *${firmHeader}*\n`;
     if (monthHeader) text += monthHeader;
     text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     text += `⚠️ *TOTAL OUTSTANDING DUE: ₹ ${formatInr(totalDue)}*\n\n`;
 
     text += `💰 *FINANCIAL OVERVIEW:*\n`;
-    text += `• 💎 Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
-    text += `• ✅ Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
-    text += `• ⏳ Unpaid / Pending Bills: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n`;
+    text += `  • Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+    text += `  • Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+    text += `  • Unpaid / Pending Bills: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n`;
     if (totalTds > 0) {
-      text += `• 📑 Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+      text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
     }
     if (totalOtherDed > 0) {
-      text += `• 🔻 Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+      text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
     }
     text += `\n`;
 
     if (unpaidInvoices.length > 0) {
-      const billNoTags = unpaidInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
-      text += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+      text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
     }
 
     if (activeFirm === 'Both') {
       const firmLines: string[] = [];
       if (vithalDue > 0 || vithalTotal > 0) {
-        firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}* (${vithalUnpaid.length} Pending)`);
+        firmLines.push(`  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}* (${vithalUnpaid.length} Pending)`);
       }
       if (rvDue > 0 || rvTotal > 0) {
-        firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}* (${rvUnpaid.length} Pending)`);
+        firmLines.push(`  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}* (${rvUnpaid.length} Pending)`);
       }
       if (firmLines.length > 0) {
         text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
@@ -1057,7 +1072,7 @@ export async function getCompanyDetailByIntent(
   const pagedInvoices = filteredInvoices.slice(startIndex, startIndex + PAGE_SIZE);
 
   let text = `🏢 *${company.name.toUpperCase()}*\n`;
-  text += `🏢 Firm Scope: *${firmHeader}* (Page ${currentPage}/${totalPages})\n`;
+  text += `🏢 Scope: *${firmHeader}* (Page ${currentPage}/${totalPages})\n`;
   if (monthHeader) text += monthHeader;
   text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
@@ -1065,26 +1080,26 @@ export async function getCompanyDetailByIntent(
   if (activeFirm === 'Both') {
     const firmLines: string[] = [];
     if (vithalTotal > 0 || vithalDue > 0) {
-      firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
+      firmLines.push(`  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
     }
     if (rvTotal > 0 || rvDue > 0) {
-      firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
+      firmLines.push(`  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
     }
     if (firmLines.length > 0) {
       text += `${firmLines.join('\n')}\n`;
     }
   }
-  text += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
-  text += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
-  text += `• 💎 *Total Grand Invoiced:* *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
-  text += `• ✅ *Total Received:* *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Bills Settled)\n`;
+  text += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
+  text += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
+  text += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
+  text += `  • Total Received: *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Settled)\n`;
   if (totalTds > 0) {
-    text += `• 📑 *Total TDS Deducted:* *₹ ${formatInr(totalTds)}*\n`;
+    text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
   }
   if (totalOtherDed > 0) {
-    text += `• 🔻 *Other Deductions:* *₹ ${formatInr(totalOtherDed)}*\n`;
+    text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
   }
-  text += `• ⚠️ *TOTAL OUTSTANDING DUE:* *₹ ${formatInr(totalDue)}* (${unpaidInvoices.length} Bills Pending)\n\n`;
+  text += `  • Outstanding Due: *₹ ${formatInr(totalDue)}* (${unpaidInvoices.length} Pending)\n\n`;
 
   text += `━━━━━━━━━━━━━━━━━━━━━\n`;
   text += `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*\n\n`;
@@ -1095,19 +1110,19 @@ export async function getCompanyDetailByIntent(
     const isPartial = !isPaid && inv.received > 0;
     const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
 
-    text += `${startIndex + idx + 1}️⃣ *Bill #${inv.billNo}* (${firm})\n`;
-    text += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-    text += `• 💵 Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
+    text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}* (${firm})\n`;
+    text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+    text += `  • Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
     if (inv.gstAmount > 0) {
-      text += `• 🔖 GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
+      text += `  • GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
     }
-    text += `• 📊 Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-    text += `• 💰 Received: *₹ ${formatInr(inv.received)}*\n`;
+    text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    text += `  • Received: *₹ ${formatInr(inv.received)}*\n`;
     if (inv.tds > 0) {
-      text += `• 📑 TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
+      text += `  • TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
     }
-    text += `• ⚠️ Outstanding Due: *₹ ${formatInr(inv.due)}*\n`;
-    text += `• 🏁 Status: *${statusTag}*\n\n`;
+    text += `  • Outstanding Due: *₹ ${formatInr(inv.due)}*\n`;
+    text += `  • Status: ${statusTag}\n\n`;
   });
 
   if (company.contactNumber || company.kindAttn) {
@@ -1176,9 +1191,9 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
       workshop.forEach((f, idx) => {
         const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
         msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
-        msg += `• 🚜 Model: *${f.make || ''} ${f.model || ''}*\n`;
-        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
-        msg += `• 📍 Location: *Workshop*\n\n`;
+        msg += `  • Model: *${f.make || ''} ${f.model || ''}*\n`;
+        msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
+        msg += `  • Location: *Workshop*\n\n`;
       });
     }
 
@@ -1205,9 +1220,9 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
         const site = f.siteCompany || f.siteArea || 'Client Site';
         const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
         msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
-        msg += `• 🏢 Client Site: *${site}*\n`;
-        msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
-        if (f.siteArea) msg += `• 📍 Area: *${f.siteArea}*\n`;
+        msg += `  • Client Site: *${site}*\n`;
+        msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
+        if (f.siteArea) msg += `  • Area: *${f.siteArea}*\n`;
         msg += `\n`;
       });
     }
@@ -1230,13 +1245,13 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   msg += `📊 *FLEET BREAKDOWN:*\n`;
-  msg += `• 🚜 Total Fleet: *${all.length} Units*\n`;
-  msg += `• 🟢 On-Site (Deployed): *${onSite.length} Units*\n`;
-  msg += `• 🟠 Workshop (Idle): *${workshop.length} Units*\n`;
+  msg += `  • Total Fleet: *${all.length} Units*\n`;
+  msg += `  • On-Site (Deployed): *${onSite.length} Units*\n`;
+  msg += `  • Workshop (Idle): *${workshop.length} Units*\n`;
   if (notConfirmed.length > 0) {
-    msg += `• 🔴 Unconfirmed: *${notConfirmed.length} Units*\n`;
+    msg += `  • Unconfirmed: *${notConfirmed.length} Units*\n`;
   }
-  msg += `• 📈 Fleet Utilization: *${utilRate}%*\n\n`;
+  msg += `  • Fleet Utilization: *${utilRate}%*\n\n`;
 
   msg += `_Tap a button below to view detailed lists:_`;
 
@@ -1276,16 +1291,16 @@ export async function getForkliftDetail(serialQuery: string): Promise<AssistantR
 
   let msg = `🚜 *FORKLIFT DETAILS: #${f.serialNumber}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `• 🏭 Firm: *${firm}*\n`;
-  msg += `• 🚜 Make / Model: *${f.make || ''} ${f.model || ''}*\n`;
-  msg += `• ⚡ Capacity: *${f.capacity || 'N/A'}*\n`;
-  msg += `• 📍 Location: *${f.locationType || 'N/A'}*\n`;
+  msg += `  • Firm: *${firm}*\n`;
+  msg += `  • Make / Model: *${f.make || ''} ${f.model || ''}*\n`;
+  msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
+  msg += `  • Location: *${f.locationType || 'N/A'}*\n`;
   if (f.locationType === 'On-Site') {
-    msg += `• 🏢 Client Site: *${f.siteCompany || 'N/A'}*\n`;
-    if (f.siteArea) msg += `• 📍 Area: *${f.siteArea}*\n`;
-    if (f.siteContactPerson) msg += `• 👤 Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+    msg += `  • Client Site: *${f.siteCompany || 'N/A'}*\n`;
+    if (f.siteArea) msg += `  • Area: *${f.siteArea}*\n`;
+    if (f.siteContactPerson) msg += `  • Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
   }
-  if (f.remarks) msg += `• 📝 Remarks: _${f.remarks}_\n`;
+  if (f.remarks) msg += `  • Remarks: _${f.remarks}_\n`;
 
   return { text: msg.trim() };
 }
@@ -1325,7 +1340,7 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
     } else {
       msg += `Total Absent: *${absent.length} Staff*\n\n`;
       absent.forEach((name, i) => {
-        msg += `${i + 1}. *${name}*\n`;
+        msg += `  ${i + 1}. *${name}*\n`;
       });
     }
     return { text: msg.trim() };
@@ -1336,7 +1351,7 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
     msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
     msg += `Total Present: *${present.length} Staff*\n\n`;
     present.forEach((name, i) => {
-      msg += `${i + 1}. *${name}*\n`;
+      msg += `  ${i + 1}. *${name}*\n`;
     });
     return { text: msg.trim() };
   }
@@ -1345,25 +1360,25 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   msg += `👥 *ATTENDANCE SUMMARY:*\n`;
-  msg += `• Total Staff: *${empSnap.size}*\n`;
-  msg += `• 🟢 Present: *${present.length}*\n`;
-  msg += `• 🔴 Absent: *${absent.length}*\n`;
+  msg += `  • Total Staff: *${empSnap.size}*\n`;
+  msg += `  • Present: *${present.length}*\n`;
+  msg += `  • Absent: *${absent.length}*\n`;
   if (halfDay.length > 0) {
-    msg += `• 🟡 Half-Day: *${halfDay.length}*\n`;
+    msg += `  • Half-Day: *${halfDay.length}*\n`;
   }
   msg += `\n`;
 
   if (absent.length > 0) {
     msg += `🔴 *ABSENT STAFF (${absent.length}):*\n`;
     absent.forEach((name, i) => {
-      msg += `${i + 1}. *${name}*\n`;
+      msg += `  ${i + 1}. *${name}*\n`;
     });
     msg += `\n`;
   }
 
   if (present.length > 0) {
     msg += `🟢 *PRESENT STAFF (${present.length}):*\n`;
-    msg += `• ${present.join(', ')}\n`;
+    msg += `  • ${present.join(', ')}\n`;
   }
 
   return { text: msg.trim() };
@@ -1471,23 +1486,23 @@ export async function getMonthlyBillingSummary(
   msg += `💰 *${monthLabel.toUpperCase()} FINANCIAL SUMMARY:*\n`;
   if (activeFirm === 'Both') {
     if (vithalInvoices.length > 0) {
-      msg += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} (${vithalInvoices.length} Bills) | *Due: ₹ ${formatInr(vithalDue)}*\n`;
+      msg += `  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} (${vithalInvoices.length} Bills) | *Due: ₹ ${formatInr(vithalDue)}*\n`;
     }
     if (rvInvoices.length > 0) {
-      msg += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} (${rvInvoices.length} Bills) | *Due: ₹ ${formatInr(rvDue)}*\n`;
+      msg += `  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} (${rvInvoices.length} Bills) | *Due: ₹ ${formatInr(rvDue)}*\n`;
     }
   }
-  msg += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
-  msg += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
-  msg += `• 💎 *Total Grand Invoiced:* *₹ ${formatInr(totalBilled)}* (${monthInvoices.length} Bills)\n`;
-  msg += `• ✅ *Total Received:* *₹ ${formatInr(totalReceived)}*\n`;
+  msg += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
+  msg += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
+  msg += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${monthInvoices.length} Bills)\n`;
+  msg += `  • Total Received: *₹ ${formatInr(totalReceived)}*\n`;
   if (totalTds > 0) {
-    msg += `• 📑 *Total TDS Deducted:* *₹ ${formatInr(totalTds)}*\n`;
+    msg += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
   }
   if (totalOtherDed > 0) {
-    msg += `• 🔻 *Other Deductions:* *₹ ${formatInr(totalOtherDed)}*\n`;
+    msg += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
   }
-  msg += `• ⚠️ *TOTAL MONTH DUE BALANCE:* *₹ ${formatInr(totalDue)}*\n\n`;
+  msg += `  • Total Month Due Balance: *₹ ${formatInr(totalDue)}*\n\n`;
 
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `📋 *ALL INVOICES GENERATED IN ${monthLabel.toUpperCase()} (${monthInvoices.length}):*\n\n`;
@@ -1498,15 +1513,15 @@ export async function getMonthlyBillingSummary(
     const isPartial = !isPaid && inv.received > 0;
     const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIAL (Due ₹ ${formatInr(inv.due)})` : `⏳ DUE ₹ ${formatInr(inv.due)}`;
 
-    msg += `${idx + 1}️⃣ *Bill #${inv.billNo}* • *${inv.companyName}* (${firm})\n`;
-    msg += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-    msg += `• 💵 Basic: ₹ ${formatInr(inv.netTotal)} | 🔖 GST: ₹ ${formatInr(inv.gstAmount)}\n`;
-    msg += `• 📊 Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-    msg += `• 💰 Received: ₹ ${formatInr(inv.received)}`;
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}* (${firm})\n`;
+    msg += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+    msg += `  • Basic: ₹ ${formatInr(inv.netTotal)} | GST: ₹ ${formatInr(inv.gstAmount)}\n`;
+    msg += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    msg += `  • Received: ₹ ${formatInr(inv.received)}`;
     if (inv.tds > 0) msg += ` (TDS: ₹ ${formatInr(inv.tds)})`;
     msg += `\n`;
-    msg += `• ⚠️ Outstanding: *₹ ${formatInr(inv.due)}*\n`;
-    msg += `• 🏁 Status: *${statusTag}*\n\n`;
+    msg += `  • Outstanding: *₹ ${formatInr(inv.due)}*\n`;
+    msg += `  • Status: ${statusTag}\n\n`;
   });
 
   return {
@@ -1607,16 +1622,16 @@ export async function getMonthlyPendingBills(
   const totalPendingDue = pendingInvoices.reduce((s, i) => s + i.due, 0);
 
   let msg = `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n`;
-  msg += `🏢 Firm Scope: *${firmLabel}*\n`;
+  msg += `🏢 Scope: *${firmLabel}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   msg += `📊 *SUMMARY:*\n`;
-  msg += `• Total Unpaid Invoices: *${pendingInvoices.length} Bills*\n`;
-  msg += `• ⚠️ Total Pending Due: *₹ ${formatInr(totalPendingDue)}*\n\n`;
+  msg += `  • Total Unpaid Invoices: *${pendingInvoices.length} Bills*\n`;
+  msg += `  • Total Pending Due: *₹ ${formatInr(totalPendingDue)}*\n\n`;
 
   if (pendingInvoices.length > 0) {
-    const billNoTags = pendingInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
-    msg += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+    const billNoTags = pendingInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+    msg += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
   }
 
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -1627,11 +1642,11 @@ export async function getMonthlyPendingBills(
     const isPartial = inv.received > 0;
     const statusTag = isPartial ? `🟡 PARTIAL (Paid ₹ ${formatInr(inv.received)})` : `⏳ UNPAID`;
 
-    msg += `${idx + 1}️⃣ *Bill #${inv.billNo}* • *${inv.companyName}* (${firm})\n`;
-    msg += `• 📅 Date: *${formatDateReadable(inv.date)}*\n`;
-    msg += `• 📊 Grand Total: ₹ ${formatInr(inv.grandTotal)}\n`;
-    msg += `• ⚠️ Pending Due: *₹ ${formatInr(inv.due)}*\n`;
-    msg += `• 🏁 Status: *${statusTag}*\n\n`;
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}* (${firm})\n`;
+    msg += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+    msg += `  • Grand Total: ₹ ${formatInr(inv.grandTotal)}\n`;
+    msg += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
+    msg += `  • Status: ${statusTag}\n\n`;
   });
 
   return {
@@ -2221,7 +2236,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     // Help
     if (structured.intent === 'help') {
       return {
-        text: `🤖 *VE Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n• 🔢 *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n• 📋 *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n• 💰 *Total Pending Due:* _"Bisleri ka kitna paisa baki hai"_\n• 📄 *Saare Bills:* _"Bisleri bills"_\n• 📅 *Month & Firm Filter:* _"is month ke saare pending bills Vithal ke"_\n• ⚠️ *Top Debtors Ranking:* _"Top pending"_\n• 🚜 *Forklift Fleet:* _"Workshop"_, _"On-site"_\n• 👥 *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n\n👇 *Select Active Firm below:*`,
+        text: `🤖 *VE Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n  • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n  • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n  • *Total Pending Due:* _"Bisleri ka kitna paisa baki hai"_\n  • *Saare Bills:* _"Bisleri bills"_\n  • *Month & Firm Filter:* _"is month ke saare pending bills Vithal ke"_\n  • *Top Debtors Ranking:* _"Top pending"_\n  • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n  • *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n\n👇 *Select Active Firm below:*`,
         buttons: renderFirmRadioButtons(activeFirm),
       };
     }
@@ -2308,7 +2323,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
   // Fallback Guide
   const activeFirm = await getUserActiveFirm(chatId);
   return {
-    text: `🤖 *VE Dashboard AI Assistant*\n🏢 Active Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap bilkul specific sawaal pooch sakte hain:\n\n• 🔢 *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n• 📋 *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n• 📅 *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n• ⚠️ *Top Debtors Ranking:* _"Top pending"_\n• 🚜 *Forklift Fleet:* _"Workshop"_, _"On-site"_\n• 👥 *Attendance:* _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
+    text: `🤖 *VE Dashboard AI Assistant*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap bilkul specific sawaal pooch sakte hain:\n\n  • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n  • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n  • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n  • *Top Debtors Ranking:* _"Top pending"_\n  • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n  • *Attendance:* _"Today attendance"_\n\n👇 *Select Active Firm below:*`,
     buttons: renderFirmRadioButtons(activeFirm),
   };
 }
