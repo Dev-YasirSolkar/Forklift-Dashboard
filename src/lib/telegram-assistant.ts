@@ -860,7 +860,7 @@ function renderSingleFirmCompanyReport(
       text: text.trim(),
       buttons: [
         [
-          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
         ],
         [
           { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
@@ -931,7 +931,7 @@ function renderSingleFirmCompanyReport(
     }
 
     buttons.push([
-      { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+      { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
     ]);
     buttons.push([
       { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
@@ -976,7 +976,7 @@ function renderSingleFirmCompanyReport(
       text: text.trim(),
       buttons: [
         [
-          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
         ],
         [
           { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
@@ -1050,7 +1050,7 @@ function renderSingleFirmCompanyReport(
   }
 
   buttons.push([
-    { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://vedashboard.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
+    { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}&company=${encodeURIComponent(company.name)}` } },
   ]);
   buttons.push([
     { text: '⚠️ View Due Summary', callback_data: `comp_pend:${company.name}` },
@@ -1840,7 +1840,7 @@ export async function listAllCompanies(): Promise<AssistantResponse> {
  * Render WebApp Launcher Button for Interactive 13-Column Accounting Billing Table.
  */
 export function renderBillingWebAppButton(activeFirm: EnterpriseType = 'Both', companyName?: string): AssistantResponse {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://vedashboard.vercel.app';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ve-dashboard-1hlf.vercel.app';
   let url = `${baseUrl}/telegram-webapp?firm=${activeFirm}`;
   if (companyName) {
     url += `&company=${encodeURIComponent(companyName)}`;
