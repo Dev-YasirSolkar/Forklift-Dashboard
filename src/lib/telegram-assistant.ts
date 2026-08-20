@@ -2,13 +2,14 @@
  * @fileOverview Complete Enterprise AI Assistant Engine for Vithal & R.V Enterprises
  * 
  * ARCHITECTURAL PRINCIPLES:
- * 1. Conversational Context & Follow-Up Session Memory (15 min sliding window).
- * 2. Structured Intent & Entity Parsing (Deterministic + Gemini NLU JSON extraction).
- * 3. 100% Deterministic Financial & Business Calculations (Zero hallucination).
- * 4. Multi-Firm Strict Isolation & Multi-Message Dispatch:
+ * 1. Smart Intent & Company Entity Resolution:
+ *    - New company mentions ALWAYS take immediate precedence and clear previous cached entities.
+ *    - Follow-up session context (15 min window) is ONLY used when no new company/intent is mentioned.
+ * 2. Multi-Firm Strict Isolation & Multi-Message Dispatch:
  *    - When querying "Both" firms and data exists in both Vithal & RV, outputs TWO separate distinct messages (Vithal message + RV message).
  *    - If data exists in only 1 firm (e.g. Bisleri only in Vithal), outputs only that 1 firm's message.
- * 5. Formatting Standards:
+ * 3. 100% Deterministic Financial & Business Calculations (Zero hallucination).
+ * 4. Formatting Standards:
  *    - Bill Numbers displayed with enterprise suffix: e.g. "1571-MHE", "838-RV".
  *    - Icons / Emojis used ONLY in Main Titles & Section Headers.
  *    - Body items formatted as clean indented bullet points ("  • ").
@@ -335,6 +336,67 @@ export function extractFirmFromQuery(queryStr: string, fallback: EnterpriseType)
     return 'Both';
   }
   return fallback;
+}
+
+/**
+ * Find matching companies from user text.
+ */
+export function findMatchingCompanies(text: string, allCompanyNames: string[]): string[] {
+  const lower = text.toLowerCase().trim();
+  const matched: string[] = [];
+
+  const stopWords = new Set([
+    'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
+    'llp', 'and', 'the', 'services', 'solutions', 'international',
+    'internationals', 'group', 'india', 'supply', 'chain', 'corp',
+    'corporation', 'industries', 'freight', 'logistics', 'logictics',
+    'traders', 'trading', 'works', 'company', 'ka', 'ki', 'ke', 'details',
+    'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill',
+    'last', 'previous', 'month', 'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'kaun', 'kitna', 'baki', 'due',
+    'konse', 'kitne', 'saare', 'sab', 'invoices', 'account', 'pura', 'hisaab',
+    'sirf', 'dono', 'both', 'rv', 'vithal', 'total', 'amount', 'overall'
+  ]);
+
+  for (const fullName of allCompanyNames) {
+    const fullLower = fullName.toLowerCase();
+    
+    // 1. Direct substring match
+    if (lower.includes(fullLower)) {
+      matched.push(fullName);
+      continue;
+    }
+
+    // 2. Significant brand keyword match
+    const brandTokens = fullLower
+      .split(/[\s,./()_]+/)
+      .filter(w => w.length >= 3 && !stopWords.has(w));
+
+    let hit = false;
+    for (const token of brandTokens) {
+      if (hasWord(lower, token) || (token.length >= 4 && lower.includes(token))) {
+        matched.push(fullName);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) continue;
+
+    // 3. Fuzzy similarity with query tokens
+    const queryTokens = lower.split(/[\s,./()_]+/).filter(w => w.length >= 4 && !stopWords.has(w));
+    for (const qToken of queryTokens) {
+      for (const bToken of brandTokens) {
+        if (bToken.length >= 4 && stringSimilarity(qToken, bToken) >= 0.75) {
+          matched.push(fullName);
+          hit = true;
+          break;
+        }
+      }
+      if (hit) break;
+    }
+  }
+
+  return Array.from(new Set(matched));
 }
 
 /**
@@ -1819,6 +1881,7 @@ OUTPUT JSON FORMAT ONLY:
 
 /**
  * Deterministic Intent & Follow-up Resolver.
+ * Strict Entity Isolation: If a new company is mentioned in the prompt, it ALWAYS overrides old session memory!
  */
 export async function resolveUserIntent(userPrompt: string, chatId: string): Promise<StructuredIntent> {
   const raw = userPrompt.trim();
@@ -1826,6 +1889,7 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   const session = getUserSession(chatId);
   const userActiveFirm = await getUserActiveFirm(chatId);
   const targetMonth = extractTargetMonth(raw);
+  const queryFirm = extractFirmFromQuery(raw, userActiveFirm);
 
   // 1. Direct Firm Commands
   if (lower === '/firm' || lower === 'firm' || lower === '/switch' || lower === 'switch' || lower === 'change firm') {
@@ -1846,229 +1910,18 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     return { intent: 'help', firm: userActiveFirm, detailLevel: 'summary', confidence: 1.0, rawText: raw };
   }
 
-  // 4. Follow-up Query Modifications
-  // Case A: Firm change follow-up ("RV ka?", "Vithal pe karo", "sirf RV", "dono ka")
-  const isFirmFollowUp = (
-    (lower === 'rv' || lower === 'vithal' || lower === 'both' || lower.startsWith('rv ka') || lower.startsWith('vithal ka') || lower.startsWith('dono ka') || lower.includes('sirf rv') || lower.includes('sirf vithal')) &&
-    session.lastEntity
-  );
-  if (isFirmFollowUp) {
-    const newFirm = extractFirmFromQuery(raw, session.lastFirm || userActiveFirm);
-    return {
-      intent: session.lastIntent || 'pending_balance',
-      entity: session.lastEntity,
-      firm: newFirm,
-      timeRange: session.lastMonth,
-      detailLevel: session.lastDetailLevel || 'summary',
-      confidence: 0.98,
-      rawText: raw,
-    };
-  }
-
-  // Case B: Month follow-up ("August ka?", "Pichle mahine ka?", "July ka dikhao")
-  if (targetMonth && (lower.endsWith('ka?') || lower.endsWith('ka') || lower.startsWith('aur ') || lower.startsWith('ab ')) && session.lastEntity) {
-    return {
-      intent: session.lastIntent || 'pending_balance',
-      entity: session.lastEntity,
-      firm: session.lastFirm || userActiveFirm,
-      timeRange: targetMonth,
-      detailLevel: session.lastDetailLevel || 'summary',
-      confidence: 0.95,
-      rawText: raw,
-    };
-  }
-
-  // Case C: Detail level follow-up ("Pura detail dikhao", "Bas total batao", "Bills dikhao", "Kaun kaun se")
-  if (session.lastEntity && (lower.includes('pura detail') || lower.includes('detail dikhao') || lower.includes('saare bills') || lower === 'bills')) {
-    return {
-      intent: 'bill_history',
-      entity: session.lastEntity,
-      firm: session.lastFirm || userActiveFirm,
-      timeRange: session.lastMonth,
-      detailLevel: 'detailed',
-      confidence: 0.98,
-      rawText: raw,
-    };
-  }
-  if (session.lastEntity && (lower.includes('bas total') || lower.includes('sirf total') || lower.includes('total batao'))) {
-    return {
-      intent: 'pending_balance',
-      entity: session.lastEntity,
-      firm: session.lastFirm || userActiveFirm,
-      timeRange: session.lastMonth,
-      detailLevel: 'summary',
-      confidence: 0.98,
-      rawText: raw,
-    };
-  }
-  if (session.lastEntity && (lower.includes('kaun kaun') || lower.includes('konse pending') || lower.includes('pending bills'))) {
-    return {
-      intent: 'pending_bill_list',
-      entity: session.lastEntity,
-      firm: session.lastFirm || userActiveFirm,
-      timeRange: session.lastMonth,
-      detailLevel: 'detailed',
-      confidence: 0.98,
-      rawText: raw,
-    };
-  }
-
-  // Case D: Top Debtors limit follow-up ("Top 5 karo", "Top 20", "Sirf top 5")
-  const limitMatch = lower.match(/top\s*(\d+)/i) || lower.match(/sirf\s*(\d+)/i);
-  if (limitMatch && (session.lastIntent === 'top_debtors' || lower.includes('pending') || lower.includes('due') || lower.includes('baki'))) {
-    const num = parseInt(limitMatch[1], 10);
-    const firm = extractFirmFromQuery(raw, session.lastFirm || userActiveFirm);
-    return {
-      intent: 'top_debtors',
-      firm,
-      limit: num,
-      detailLevel: 'summary',
-      confidence: 0.98,
-      rawText: raw,
-    };
-  }
-
-  // 5. Top Debtors Fresh Query
-  if (
-    lower.includes('top pending') || lower.includes('pending list') || lower.includes('baki list') ||
-    lower.includes('kiske kitne baki') || lower.includes('kiska balance') || lower.includes('sabse zyada balance') ||
-    lower.includes('sabse jyada baki') || lower.includes('debtors') || lower.includes('top due') ||
-    lower === 'pending' || lower === 'dues' || lower === 'balance'
-  ) {
-    const firm = extractFirmFromQuery(raw, userActiveFirm);
-    return { intent: 'top_debtors', firm, limit: 10, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  // 6. Fleet Fresh Query
-  if (
-    hasWord(lower, 'workshop') || hasWord(lower, 'idle') || hasWord(lower, 'khade') ||
-    hasWord(lower, 'khada') || hasWord(lower, 'godown') || hasWord(lower, 'garage') ||
-    hasWord(lower, 'khali') || lower.includes('workshop forklift') || lower.includes('workshop me')
-  ) {
-    const firm = extractFirmFromQuery(raw, userActiveFirm);
-    return { intent: 'workshop_forklifts', firm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  if (
-    hasWord(lower, 'onsite') || hasWord(lower, 'on-site') || hasWord(lower, 'deployed') ||
-    hasWord(lower, 'bahar') || lower.includes('on site') || lower.includes('client site') || lower.includes('site par')
-  ) {
-    const firm = extractFirmFromQuery(raw, userActiveFirm);
-    return { intent: 'onsite_forklifts', firm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  if (
-    hasWord(lower, 'fleet') || hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') ||
-    hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machines') ||
-    lower.includes('total unit') || lower.includes('total fleet') || lower.includes('total gadi')
-  ) {
-    const firm = extractFirmFromQuery(raw, userActiveFirm);
-    return { intent: 'fleet_summary', firm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  // 7. Attendance Fresh Query
-  if (
-    hasWord(lower, 'absent') || lower.includes('kaun nahi aaya') || lower.includes('kon nahi aaya') ||
-    lower.includes('absent staff') || lower.includes('chhutti')
-  ) {
-    return { intent: 'absent_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  if (lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('present staff')) {
-    return { intent: 'present_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  if (hasWord(lower, 'attendance') || hasWord(lower, 'haziri') || lower.includes('today attendance') || lower.includes('staff report')) {
-    return { intent: 'attendance_today', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  // 8. All Companies Fresh Query
-  if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
-    return { intent: 'all_companies', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
-  }
-
-  // 9. Monthly Pending Bills / Billing Fresh Query (Without company name)
-  const isMonthlyPendingRequest = (
-    targetMonth !== null &&
-    (
-      hasWord(lower, 'pending') || hasWord(lower, 'baki') || hasWord(lower, 'due') ||
-      hasWord(lower, 'unpaid') || lower.includes('pending bills') || lower.includes('baki bills')
-    )
-  );
-
-  const isMonthlyBillingRequest = (
-    hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') ||
-    hasWord(lower, 'collection') || hasWord(lower, 'kamai') || lower.includes('total bill') ||
-    lower.includes('sales') || (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'hisab')))
-  );
-
-  const queryFirm = extractFirmFromQuery(raw, userActiveFirm);
-
-  // Check if query matches a company
+  // 4. FETCH COMPANY LIST AND CHECK IF CURRENT PROMPT MENTIONS A COMPANY FIRST
   const firestore = await getAuthenticatedFirestore();
   const companiesSnap = await getDocs(collection(firestore, 'companies'));
   const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
 
-  const stopWords = new Set([
-    'pvt', 'ltd', 'limited', 'private', 'enterprises', 'enterprise',
-    'llp', 'and', 'the', 'services', 'solutions', 'international',
-    'internationals', 'group', 'india', 'supply', 'chain', 'corp',
-    'corporation', 'industries', 'freight', 'logistics', 'logictics',
-    'traders', 'trading', 'works', 'company', 'ka', 'ki', 'ke', 'details',
-    'batao', 'chahiye', 'kya', 'hai', 'dikhao', 'pending', 'bills', 'bill',
-    'last', 'previous', 'month', 'jan', 'feb', 'mar', 'apr', 'may', 'jun',
-    'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'kaun', 'kitna', 'baki', 'due',
-    'konse', 'kitne', 'saare', 'sab', 'invoices', 'account', 'pura', 'hisaab'
-  ]);
+  const matchedCompanies = findMatchingCompanies(raw, allCompanyNames);
 
-  const matchedCompanies: string[] = [];
-
-  for (const companyFullName of allCompanyNames) {
-    const companyLower = companyFullName.toLowerCase();
-
-    if (lower.includes(companyLower)) {
-      matchedCompanies.push(companyFullName);
-      continue;
-    }
-
-    const brandWords = companyLower
-      .split(/[\s,./()]+/)
-      .filter(w => w.length >= 3 && !stopWords.has(w));
-
-    if (brandWords.some(w => hasWord(lower, w))) {
-      if (!matchedCompanies.includes(companyFullName)) {
-        matchedCompanies.push(companyFullName);
-      }
-      continue;
-    }
-
-    const queryWords = lower.split(/[\s,./()]+/).filter(w => w.length >= 4 && !stopWords.has(w));
-    for (const qWord of queryWords) {
-      for (const bWord of brandWords) {
-        if (bWord.length >= 4 && stringSimilarity(qWord, bWord) >= 0.75) {
-          if (!matchedCompanies.includes(companyFullName)) {
-            matchedCompanies.push(companyFullName);
-          }
-        }
-      }
-    }
-  }
-
-  // If no company matched and query is a month query
-  if (matchedCompanies.length === 0) {
-    if (isMonthlyPendingRequest) {
-      return { intent: 'monthly_pending_bills', firm: queryFirm, timeRange: targetMonth, detailLevel: 'detailed', confidence: 0.95, rawText: raw };
-    }
-    if (isMonthlyBillingRequest) {
-      return { intent: 'billing_summary', firm: queryFirm, timeRange: targetMonth, detailLevel: 'summary', confidence: 0.95, rawText: raw };
-    }
-  }
-
-  // If single company matched:
+  // ─── CASE A: SINGLE COMPANY EXPLICITLY FOUND IN PROMPT ───────────────────
+  // ALWAYS overrides old session entity!
   if (matchedCompanies.length === 1) {
     const companyName = matchedCompanies[0];
 
-    // Check intent precision
     const isAskingCount = (
       lower.includes('kitne bill') || lower.includes('kitne bills') || lower.includes('kitna bill baki') ||
       lower.includes('kitne invoice') || lower.includes('kitne pending') || lower.includes('how many') ||
@@ -2078,7 +1931,7 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     const isAskingPendingList = (
       lower.includes('konse pending') || lower.includes('konse bill') || lower.includes('kaun se pending') ||
       lower.includes('kaun se bill') || lower.includes('pending bills dikhao') || lower.includes('pending bills list') ||
-      lower.includes('unpaid bills') || lower.includes('pending invoices')
+      lower.includes('unpaid bills') || lower.includes('pending invoices') || lower.includes('unpaid invoices')
     );
 
     const isAskingPendingBalance = (
@@ -2118,12 +1971,12 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
       firm: queryFirm,
       timeRange: targetMonth,
       detailLevel,
-      confidence: 0.98,
+      confidence: 0.99,
       rawText: raw,
     };
   }
 
-  // If multiple companies matched:
+  // ─── CASE B: MULTIPLE COMPANIES MATCHED IN PROMPT ────────────────────────
   if (matchedCompanies.length > 1) {
     return {
       intent: 'clarification_required',
@@ -2134,7 +1987,88 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     };
   }
 
-  // 10. Forklift specific serial search
+  // ─── CASE C: NO COMPANY IN PROMPT - CHECK GENERAL INTENTS FIRST ─────────
+
+  // Top Debtors
+  const limitMatch = lower.match(/top\s*(\d+)/i) || lower.match(/sirf\s*(\d+)/i);
+  if (
+    lower.includes('top pending') || lower.includes('pending list') || lower.includes('baki list') ||
+    lower.includes('kiske kitne baki') || lower.includes('kiska balance') || lower.includes('sabse zyada balance') ||
+    lower.includes('sabse jyada baki') || lower.includes('debtors') || lower.includes('top due') ||
+    lower === 'pending' || lower === 'dues' || lower === 'balance' || limitMatch
+  ) {
+    const num = limitMatch ? parseInt(limitMatch[1], 10) : 10;
+    return { intent: 'top_debtors', firm: queryFirm, limit: num, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  // Fleet
+  if (
+    hasWord(lower, 'workshop') || hasWord(lower, 'idle') || hasWord(lower, 'khade') ||
+    hasWord(lower, 'khada') || hasWord(lower, 'godown') || hasWord(lower, 'garage') ||
+    hasWord(lower, 'khali') || lower.includes('workshop forklift') || lower.includes('workshop me')
+  ) {
+    return { intent: 'workshop_forklifts', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  if (
+    hasWord(lower, 'onsite') || hasWord(lower, 'on-site') || hasWord(lower, 'deployed') ||
+    hasWord(lower, 'bahar') || lower.includes('on site') || lower.includes('client site') || lower.includes('site par')
+  ) {
+    return { intent: 'onsite_forklifts', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  if (
+    hasWord(lower, 'fleet') || hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') ||
+    hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machines') ||
+    lower.includes('total unit') || lower.includes('total fleet') || lower.includes('total gadi')
+  ) {
+    return { intent: 'fleet_summary', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  // Attendance
+  if (
+    hasWord(lower, 'absent') || lower.includes('kaun nahi aaya') || lower.includes('kon nahi aaya') ||
+    lower.includes('absent staff') || lower.includes('chhutti')
+  ) {
+    return { intent: 'absent_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  if (lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('present staff')) {
+    return { intent: 'present_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  if (hasWord(lower, 'attendance') || hasWord(lower, 'haziri') || lower.includes('today attendance') || lower.includes('staff report')) {
+    return { intent: 'attendance_today', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  // All Companies List
+  if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
+    return { intent: 'all_companies', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
+  }
+
+  // Monthly Reports (Without Company)
+  const isMonthlyPendingRequest = (
+    targetMonth !== null &&
+    (
+      hasWord(lower, 'pending') || hasWord(lower, 'baki') || hasWord(lower, 'due') ||
+      hasWord(lower, 'unpaid') || lower.includes('pending bills') || lower.includes('baki bills')
+    )
+  );
+
+  const isMonthlyBillingRequest = (
+    hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') ||
+    hasWord(lower, 'collection') || hasWord(lower, 'kamai') || lower.includes('total bill') ||
+    lower.includes('sales') || (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'hisab')))
+  );
+
+  if (isMonthlyPendingRequest) {
+    return { intent: 'monthly_pending_bills', firm: queryFirm, timeRange: targetMonth, detailLevel: 'detailed', confidence: 0.95, rawText: raw };
+  }
+  if (isMonthlyBillingRequest) {
+    return { intent: 'billing_summary', firm: queryFirm, timeRange: targetMonth, detailLevel: 'summary', confidence: 0.95, rawText: raw };
+  }
+
+  // Forklift serial number
   const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
   for (const d of forkliftsSnap.docs) {
     const sn = String(d.data().serialNumber || '').trim();
@@ -2143,7 +2077,76 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     }
   }
 
-  // 11. Try Gemini NLU for Unstructured Conversational Reasoning
+  // ─── CASE D: PURE CONVERSATIONAL FOLLOW-UP REFERRING TO PREVIOUS ENTITY ───
+  if (session.lastEntity) {
+    // 1. Firm change follow-up ("RV ka?", "Vithal pe karo", "sirf RV", "dono ka")
+    const isFirmFollowUp = (
+      lower === 'rv' || lower === 'vithal' || lower === 'both' ||
+      lower.startsWith('rv ka') || lower.startsWith('vithal ka') || lower.startsWith('dono ka') ||
+      lower.includes('sirf rv') || lower.includes('sirf vithal') || lower.includes('sirf dono')
+    );
+    if (isFirmFollowUp) {
+      return {
+        intent: session.lastIntent || 'pending_balance',
+        entity: session.lastEntity,
+        firm: queryFirm,
+        timeRange: session.lastMonth,
+        detailLevel: session.lastDetailLevel || 'summary',
+        confidence: 0.98,
+        rawText: raw,
+      };
+    }
+
+    // 2. Month follow-up ("August ka?", "Pichle mahine ka?", "July ka dikhao")
+    if (targetMonth && (lower.endsWith('ka?') || lower.endsWith('ka') || lower.startsWith('aur ') || lower.startsWith('ab '))) {
+      return {
+        intent: session.lastIntent || 'pending_balance',
+        entity: session.lastEntity,
+        firm: session.lastFirm || userActiveFirm,
+        timeRange: targetMonth,
+        detailLevel: session.lastDetailLevel || 'summary',
+        confidence: 0.95,
+        rawText: raw,
+      };
+    }
+
+    // 3. Detail level follow-up
+    if (lower.includes('pura detail') || lower.includes('detail dikhao') || lower.includes('saare bills') || lower === 'bills') {
+      return {
+        intent: 'bill_history',
+        entity: session.lastEntity,
+        firm: session.lastFirm || userActiveFirm,
+        timeRange: session.lastMonth,
+        detailLevel: 'detailed',
+        confidence: 0.98,
+        rawText: raw,
+      };
+    }
+    if (lower.includes('bas total') || lower.includes('sirf total') || lower.includes('total batao')) {
+      return {
+        intent: 'pending_balance',
+        entity: session.lastEntity,
+        firm: session.lastFirm || userActiveFirm,
+        timeRange: session.lastMonth,
+        detailLevel: 'summary',
+        confidence: 0.98,
+        rawText: raw,
+      };
+    }
+    if (lower.includes('kaun kaun') || lower.includes('konse pending') || lower.includes('pending bills')) {
+      return {
+        intent: 'pending_bill_list',
+        entity: session.lastEntity,
+        firm: session.lastFirm || userActiveFirm,
+        timeRange: session.lastMonth,
+        detailLevel: 'detailed',
+        confidence: 0.98,
+        rawText: raw,
+      };
+    }
+  }
+
+  // ─── CASE E: GEMINI NLU FALLBACK ─────────────────────────────────────────
   const geminiParsed = await extractIntentWithGeminiNLU(raw, session);
   if (geminiParsed && geminiParsed.intent !== 'unknown') {
     return geminiParsed;
@@ -2195,16 +2198,15 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
 
     // ─── 1. RESOLVE STRUCTURED INTENT WITH CONVERSATION CONTEXT ────────────
     const structured = await resolveUserIntent(raw, chatId);
-    const session = getUserSession(chatId);
 
-    // Save turn state in session
+    // Save turn state in session - strictly set or clear entity!
     saveUserSession(chatId, {
       lastIntent: structured.intent,
-      lastEntity: structured.entity || session.lastEntity,
-      lastFirm: structured.firm || session.lastFirm || activeFirm,
-      lastMonth: structured.timeRange !== undefined ? structured.timeRange : session.lastMonth,
-      lastDetailLevel: structured.detailLevel || session.lastDetailLevel,
-      lastLimit: structured.limit || session.lastLimit,
+      lastEntity: structured.entity, // If intent is a general query, lastEntity becomes undefined
+      lastFirm: structured.firm || activeFirm,
+      lastMonth: structured.timeRange !== undefined ? structured.timeRange : null,
+      lastDetailLevel: structured.detailLevel || 'summary',
+      lastLimit: structured.limit,
       lastPage: structured.page || 1,
     });
 
@@ -2244,7 +2246,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     if (structured.intent === 'clarification_required') {
       const companiesSnap = await getDocs(collection(firestore, 'companies'));
       const allCompanyNames = companiesSnap.docs.map(d => String(d.data().name || '').trim()).filter(Boolean);
-      const matched = allCompanyNames.filter(c => stringSimilarity(raw, c) > 0.4 || raw.toLowerCase().includes(c.toLowerCase().slice(0, 4)));
+      const matched = findMatchingCompanies(raw, allCompanyNames);
       return renderCompanyDisambiguation(raw, matched, chatId);
     }
 
