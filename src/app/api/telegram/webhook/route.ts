@@ -78,7 +78,22 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // 2. Company Selection / Intent Buttons
+        // 2. Pagination Callback Handling
+        if (cbData.startsWith('page:')) {
+          const parts = cbData.split(':');
+          const pageType = parts[1]; // 'pendlist' | 'bills'
+          const compName = parts[2];
+          const pageNum = parseInt(parts[3] || '1', 10);
+          const activeFirm = await getUserActiveFirm(chatId);
+
+          const intent = pageType === 'pendlist' ? 'pending_list' : 'bills';
+          const res = await getCompanyDetailByIntent(compName, intent, activeFirm, null, pageNum);
+          await answerTelegramCallback(token, callbackId, `Page ${pageNum}`);
+          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          return NextResponse.json({ ok: true });
+        }
+
+        // 3. Company Selection / Intent Buttons
         if (
           cbData.startsWith('comp_select:') || 
           cbData.startsWith('comp_pend:') || 
