@@ -1509,7 +1509,8 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
 function renderSingleFirmMonthlyBilling(
   firm: 'Vithal' | 'RV',
   invoices: ProcessedInvoiceData[],
-  monthLabel: string
+  monthLabel: string,
+  detailLevel: 'summary' | 'detailed' | 'count' = 'summary'
 ): AssistantResponse {
   const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
 
@@ -1521,22 +1522,50 @@ function renderSingleFirmMonthlyBilling(
   const totalOtherDed = invoices.reduce((s, i) => s + i.otherDeductions, 0);
   const totalDueWithTds = invoices.reduce((s, i) => s + i.dueWithTds, 0);
   const totalDueWithoutTds = invoices.reduce((s, i) => s + i.dueWithoutTds, 0);
+  const paidInvoices = invoices.filter(i => i.isPaid);
+  const unpaidInvoices = invoices.filter(i => !i.isPaid);
 
   let msg = `${firmTitle}\n`;
   msg += `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
+  msg += `📌 *${monthLabel} me ${firm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'} ke total ${invoices.length} Bills generate hue hain.*\n\n`;
+
   msg += `💰 *FINANCIAL SUMMARY:*\n`;
-  msg += `      • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
-  msg += `      • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
-  msg += `      • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${invoices.length} Bills)\n`;
-  msg += `      • Total Received: *₹ ${formatInr(totalReceived)}*\n`;
-  msg += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
-  msg += `      • Total Month Due (With TDS): *₹ ${formatInr(totalDueWithTds)}*\n`;
-  msg += `      • Total Month Due (Without TDS): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+  msg += `      • Total Invoices: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+  msg += `      • Fully Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+  msg += `      • Unpaid / Pending: *${unpaidInvoices.length} Bills*\n`;
+  msg += `      • Net Due (With TDS): *₹ ${formatInr(totalDueWithTds)}*\n`;
+  msg += `      • Gross Due (Without TDS): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+  if (totalTds > 0) {
+    msg += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+  }
   msg += `─────────────────────\n\n`;
 
-  msg += `📋 *ALL INVOICES (${invoices.length}):*\n\n`;
+  if (unpaidInvoices.length > 0) {
+    const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+    msg += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+    msg += `─────────────────────\n\n`;
+  }
+
+  // When user just asked "kitne bills hai" or requested a summary, don't dump long text!
+  if (detailLevel !== 'detailed') {
+    return {
+      text: msg.trim(),
+      buttons: [
+        [
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}&month=${invoices[0]?.date ? invoices[0].date.slice(0, 7) : ''}` } },
+        ],
+        [
+          { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `quick:month_pending` },
+          { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
+  }
+
+  // Detailed list when user asks "konse konse bills" or "dikhao"
+  msg += `📋 *ALL INVOICES BREAKDOWN (${invoices.length}):*\n\n`;
 
   invoices.forEach((inv, idx) => {
     const isPaid = inv.isPaid;
@@ -1556,15 +1585,26 @@ function renderSingleFirmMonthlyBilling(
     msg += `─────────────────────\n\n`;
   });
 
-  return { text: msg.trim() };
+  return {
+    text: msg.trim(),
+    buttons: [
+      [
+        { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}` } },
+      ],
+      [
+        { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+      ],
+    ],
+  };
 }
 
 /**
- * Monthly billing summary with full invoice breakdown.
+ * Monthly billing summary with full invoice breakdown or concise count.
  */
 export async function getMonthlyBillingSummary(
   activeFirm: EnterpriseType = 'Both', 
-  targetMonth?: { monthKey: string; monthLabel: string } | null
+  targetMonth?: { monthKey: string; monthLabel: string } | null,
+  detailLevel: 'summary' | 'detailed' | 'count' = 'summary'
 ): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
 
@@ -1626,20 +1666,20 @@ export async function getMonthlyBillingSummary(
     if (vithalInvoices.length === 0) {
       return { text: `🏭 *VITHAL ENTERPRISES*\n📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices generated in ${monthLabel} for Vithal Enterprises.` };
     }
-    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
+    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel, detailLevel);
   }
 
   if (activeFirm === 'RV') {
     if (rvInvoices.length === 0) {
       return { text: `🏢 *R.V ENTERPRISES*\n📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices generated in ${monthLabel} for R.V Enterprises.` };
     }
-    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel, detailLevel);
   }
 
   // Both firms scope
   if (vithalInvoices.length > 0 && rvInvoices.length > 0) {
-    const msg1 = renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
-    const msg2 = renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+    const msg1 = renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel, detailLevel);
+    const msg2 = renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel, detailLevel);
     return {
       text: msg1.text,
       messages: [msg1, msg2],
@@ -1647,11 +1687,11 @@ export async function getMonthlyBillingSummary(
   }
 
   if (vithalInvoices.length > 0) {
-    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
+    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel, detailLevel);
   }
 
   if (rvInvoices.length > 0) {
-    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel, detailLevel);
   }
 
   return {
@@ -1665,7 +1705,8 @@ export async function getMonthlyBillingSummary(
 function renderSingleFirmMonthlyPending(
   firm: 'Vithal' | 'RV',
   invoices: ProcessedInvoiceData[],
-  monthLabel: string
+  monthLabel: string,
+  detailLevel: 'summary' | 'detailed' | 'count' = 'summary'
 ): AssistantResponse {
   const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
   const totalPendingDueWithTds = invoices.reduce((s, i) => s + i.dueWithTds, 0);
@@ -1674,6 +1715,8 @@ function renderSingleFirmMonthlyPending(
   let msg = `${firmTitle}\n`;
   msg += `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  msg += `📌 *${monthLabel} me ${firm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises'} ke total ${invoices.length} Bills pending hain.*\n\n`;
 
   msg += `📊 *PENDING SUMMARY:*\n`;
   msg += `      • Total Unpaid Invoices: *${invoices.length} Bills*\n`;
@@ -1685,6 +1728,20 @@ function renderSingleFirmMonthlyPending(
     const billNoTags = invoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
     msg += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
     msg += `─────────────────────\n\n`;
+  }
+
+  if (detailLevel !== 'detailed') {
+    return {
+      text: msg.trim(),
+      buttons: [
+        [
+          { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}` } },
+        ],
+        [
+          { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
   }
 
   msg += `📋 *UNPAID BILLS LIST (${invoices.length}):*\n\n`;
@@ -1704,7 +1761,17 @@ function renderSingleFirmMonthlyPending(
     msg += `─────────────────────\n\n`;
   });
 
-  return { text: msg.trim() };
+  return {
+    text: msg.trim(),
+    buttons: [
+      [
+        { text: '📊 Open 13-Col Live Table ↗️', web_app: { url: `https://ve-dashboard-1hlf.vercel.app/telegram-webapp?firm=${firm}` } },
+      ],
+      [
+        { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+      ],
+    ],
+  };
 }
 
 /**
@@ -1712,7 +1779,8 @@ function renderSingleFirmMonthlyPending(
  */
 export async function getMonthlyPendingBills(
   activeFirm: EnterpriseType = 'Both',
-  targetMonth?: { monthKey: string; monthLabel: string } | null
+  targetMonth?: { monthKey: string; monthLabel: string } | null,
+  detailLevel: 'summary' | 'detailed' | 'count' = 'summary'
 ): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
 
@@ -1776,20 +1844,20 @@ export async function getMonthlyPendingBills(
     if (vithalPending.length === 0) {
       return { text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n🏭 Scope: *Vithal Enterprises*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 Vithal Enterprises ka koi bhi bill pending nahi hai!` };
     }
-    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
+    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel, detailLevel);
   }
 
   if (activeFirm === 'RV') {
     if (rvPending.length === 0) {
       return { text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n🏢 Scope: *R.V Enterprises*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 R.V Enterprises ka koi bhi bill pending nahi hai!` };
     }
-    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel, detailLevel);
   }
 
   // Both firms scope
   if (vithalPending.length > 0 && rvPending.length > 0) {
-    const msg1 = renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
-    const msg2 = renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+    const msg1 = renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel, detailLevel);
+    const msg2 = renderSingleFirmMonthlyPending('RV', rvPending, monthLabel, detailLevel);
     return {
       text: msg1.text,
       messages: [msg1, msg2],
@@ -1797,11 +1865,11 @@ export async function getMonthlyPendingBills(
   }
 
   if (vithalPending.length > 0) {
-    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
+    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel, detailLevel);
   }
 
   if (rvPending.length > 0) {
-    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel, detailLevel);
   }
 
   return {
@@ -2196,6 +2264,18 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   }
 
   // Monthly Reports (Without Company)
+  const isAskingCount = (
+    lower.includes('kitne bill') || lower.includes('kitne bills') || lower.includes('kitna bill') ||
+    lower.includes('kitne invoice') || lower.includes('kitne pending') || lower.includes('how many') ||
+    lower.includes('count') || lower.includes('number of bills')
+  );
+
+  const isAskingDetailedList = (
+    lower.includes('konse') || lower.includes('kaun se') || lower.includes('dikhao') ||
+    lower.includes('list') || lower.includes('show') || lower.includes('breakdown') ||
+    lower.includes('saare bill dikhao') || lower.includes('all bills list')
+  );
+
   const isMonthlyPendingRequest = (
     targetMonth !== null &&
     (
@@ -2211,10 +2291,25 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   );
 
   if (isMonthlyPendingRequest) {
-    return { intent: 'monthly_pending_bills', firm: queryFirm, timeRange: targetMonth, detailLevel: 'detailed', confidence: 0.95, rawText: raw };
+    return {
+      intent: 'monthly_pending_bills',
+      firm: queryFirm,
+      timeRange: targetMonth,
+      detailLevel: isAskingDetailedList ? 'detailed' : (isAskingCount ? 'count' : 'summary'),
+      confidence: 0.95,
+      rawText: raw,
+    };
   }
+
   if (isMonthlyBillingRequest) {
-    return { intent: 'billing_summary', firm: queryFirm, timeRange: targetMonth, detailLevel: 'summary', confidence: 0.95, rawText: raw };
+    return {
+      intent: 'billing_summary',
+      firm: queryFirm,
+      timeRange: targetMonth,
+      detailLevel: isAskingDetailedList ? 'detailed' : (isAskingCount ? 'count' : 'summary'),
+      confidence: 0.95,
+      rawText: raw,
+    };
   }
 
   // Forklift serial number
@@ -2432,12 +2527,12 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
 
     // Monthly Pending Bills
     if (structured.intent === 'monthly_pending_bills') {
-      return await getMonthlyPendingBills(structured.firm, structured.timeRange);
+      return await getMonthlyPendingBills(structured.firm, structured.timeRange, structured.detailLevel);
     }
 
     // Monthly Billing Summary
     if (structured.intent === 'billing_summary') {
-      return await getMonthlyBillingSummary(structured.firm, structured.timeRange);
+      return await getMonthlyBillingSummary(structured.firm, structured.timeRange, structured.detailLevel);
     }
 
     // Fleet Status
