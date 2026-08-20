@@ -66,15 +66,10 @@ export async function POST(req: Request) {
         // 1. Firm Radio Button Selection
         if (cbData.startsWith('firm:')) {
           const selectedFirm = cbData.split(':')[1] as EnterpriseType;
+          await sendTelegramMessage(token, chatId, `👉 *Selected Firm:* \`${selectedFirm === 'Both' ? 'Both Firms (Vithal + RV)' : selectedFirm}\``);
           const res = await setUserActiveFirm(chatId, selectedFirm);
-          
           await answerTelegramCallback(token, callbackId, `Firm set to ${selectedFirm}!`);
-          
-          if (messageId) {
-            await editTelegramMessage(token, chatId, messageId, res.text, res.buttons);
-          } else {
-            await sendTelegramMessage(token, chatId, res.text, res.buttons);
-          }
+          await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
@@ -87,6 +82,8 @@ export async function POST(req: Request) {
           const activeFirm = await getUserActiveFirm(chatId);
 
           const intent = pageType === 'pendlist' ? 'pending_list' : 'bills';
+          const label = pageType === 'pendlist' ? `📋 Pending Bills (Page ${pageNum})` : `📄 All Invoices (Page ${pageNum})`;
+          await sendTelegramMessage(token, chatId, `👉 *Navigated:* \`${label} - ${compName}\``);
           const res = await getCompanyDetailByIntent(compName, intent, activeFirm, null, pageNum);
           await answerTelegramCallback(token, callbackId, `Page ${pageNum}`);
           await dispatchAssistantResponse(token, chatId, res);
@@ -104,31 +101,38 @@ export async function POST(req: Request) {
           const activeFirm = await getUserActiveFirm(chatId);
           let intent: 'count_pending' | 'pending' | 'pending_list' | 'bills' | 'forklifts' | 'all' = 'all';
           let compName = '';
+          let actionLabel = '';
 
           if (cbData.startsWith('comp_select:')) {
             compName = cbData.replace('comp_select:', '');
             intent = 'all';
+            actionLabel = `🏢 Selected Company: ${compName}`;
           } else if (cbData.startsWith('comp_pendlist:')) {
             compName = cbData.replace('comp_pendlist:', '');
             intent = 'pending_list';
+            actionLabel = `📋 Kaun Se Bills Pending Hai: ${compName}`;
           } else if (cbData.startsWith('comp_pend:')) {
             compName = cbData.replace('comp_pend:', '');
             intent = 'pending';
+            actionLabel = `⚠️ Due Summary: ${compName}`;
           } else if (cbData.startsWith('comp_bills:')) {
             compName = cbData.replace('comp_bills:', '');
             intent = 'bills';
+            actionLabel = `📄 All Invoices: ${compName}`;
           } else if (cbData.startsWith('comp_fork:')) {
             compName = cbData.replace('comp_fork:', '');
             intent = 'forklifts';
+            actionLabel = `🚜 Site Forklifts: ${compName}`;
           }
 
+          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`${actionLabel}\``);
           const res = await getCompanyDetailByIntent(compName, intent, activeFirm);
           await answerTelegramCallback(token, callbackId, `Loading ${compName}...`);
           await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
-        // 3. Quick Fleet & Pending Shortcuts
+        // 4. Quick Fleet & Pending Shortcuts
         if (
           cbData === 'quick:workshop' || 
           cbData === 'quick:onsite' || 
@@ -139,32 +143,38 @@ export async function POST(req: Request) {
         ) {
           const activeFirm = await getUserActiveFirm(chatId);
           if (cbData === 'quick:pending') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Top Pending Debtors\``);
             const res = await getTopPendingBalances(activeFirm);
             await answerTelegramCallback(token, callbackId);
             await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           if (cbData === 'quick:month_pending') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`⚠️ Monthly Pending Bills\``);
             const res = await getMonthlyPendingBills(activeFirm);
             await answerTelegramCallback(token, callbackId);
             await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           if (cbData === 'quick:bills') {
+            await sendTelegramMessage(token, chatId, `👉 *Selected:* \`📊 Monthly Billing Summary\``);
             const res = await getMonthlyBillingSummary(activeFirm);
             await answerTelegramCallback(token, callbackId);
             await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           const filter = cbData === 'quick:workshop' ? 'Workshop' : cbData === 'quick:onsite' ? 'On-Site' : undefined;
+          const label = filter ? `${filter} Forklifts` : 'Total Fleet Overview';
+          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🚜 ${label}\``);
           const res = await getFleetStatus(filter, activeFirm);
           await answerTelegramCallback(token, callbackId);
           await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
-        // 4. Firm Selection Menu
+        // 5. Firm Selection Menu
         if (cbData === 'menu:firm') {
+          await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🔄 Change Active Firm Scope\``);
           const res = await renderFirmSelectionMenu(chatId);
           await answerTelegramCallback(token, callbackId);
           await dispatchAssistantResponse(token, chatId, res);
