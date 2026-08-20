@@ -884,6 +884,11 @@ export async function getCompanyDetailByIntent(
       text += `• ✅ Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
       text += `• ⏳ Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
 
+      if (unpaidInvoices.length > 0) {
+        const billNoTags = unpaidInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
+        text += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+      }
+
       if (activeFirm === 'Both') {
         const firmLines: string[] = [];
         if (vithalUnpaid.length > 0 || vithalDue > 0) {
@@ -1004,6 +1009,11 @@ export async function getCompanyDetailByIntent(
       text += `• 🔻 Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
     }
     text += `\n`;
+
+    if (unpaidInvoices.length > 0) {
+      const billNoTags = unpaidInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
+      text += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+    }
 
     if (activeFirm === 'Both') {
       const firmLines: string[] = [];
@@ -1603,6 +1613,11 @@ export async function getMonthlyPendingBills(
   msg += `📊 *SUMMARY:*\n`;
   msg += `• Total Unpaid Invoices: *${pendingInvoices.length} Bills*\n`;
   msg += `• ⚠️ Total Pending Due: *₹ ${formatInr(totalPendingDue)}*\n\n`;
+
+  if (pendingInvoices.length > 0) {
+    const billNoTags = pendingInvoices.map(inv => `\`#${inv.billNo}\``).join('  •  ');
+    msg += `📋 *Pending Bill Numbers:*\n👉 ${billNoTags}\n\n`;
+  }
 
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `📋 *UNPAID BILLS LIST (${pendingInvoices.length}):*\n\n`;
