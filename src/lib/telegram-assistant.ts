@@ -721,9 +721,16 @@ export async function getCompanyDetailByIntent(
       text += `⚠️ *Total Outstanding Balance: ₹ ${formatInr(totalDue)}*\n\n`;
 
       if (activeFirm === 'Both') {
-        text += `💰 *Firm Breakdown:*\n`;
-        text += `• 🏭 Vithal Enterprises: *${vithalUnpaid.length} Bills Pending* (Due ₹ ${formatInr(vithalDue)})\n`;
-        text += `• 🏢 R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})\n\n`;
+        const firmLines: string[] = [];
+        if (vithalUnpaid.length > 0 || vithalDue > 0) {
+          firmLines.push(`• 🏭 Vithal Enterprises: *${vithalUnpaid.length} Bills Pending* (Due ₹ ${formatInr(vithalDue)})`);
+        }
+        if (rvUnpaid.length > 0 || rvDue > 0) {
+          firmLines.push(`• 🏢 R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})`);
+        }
+        if (firmLines.length > 0) {
+          text += `💰 *Firm Breakdown:*\n${firmLines.join('\n')}\n\n`;
+        }
       }
     }
 
@@ -816,9 +823,16 @@ export async function getCompanyDetailByIntent(
     text += `• 📋 Pending Unpaid Bills: *${unpaidInvoices.length} Invoices*\n\n`;
 
     if (activeFirm === 'Both') {
-      text += `🏭 *ENTERPRISE BREAKDOWN:*\n`;
-      text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
-      text += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*\n\n`;
+      const firmLines: string[] = [];
+      if (vithalDue > 0 || vithalTotal > 0) {
+        firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
+      }
+      if (rvDue > 0 || rvTotal > 0) {
+        firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
+      }
+      if (firmLines.length > 0) {
+        text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
+      }
     }
 
     if (company.contactNumber || company.kindAttn) {
@@ -850,8 +864,16 @@ export async function getCompanyDetailByIntent(
 
   text += `💰 *FINANCIAL SUMMARY:*\n`;
   if (activeFirm === 'Both') {
-    text += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*\n`;
-    text += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*\n`;
+    const firmLines: string[] = [];
+    if (vithalTotal > 0 || vithalDue > 0) {
+      firmLines.push(`• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
+    }
+    if (rvTotal > 0 || rvDue > 0) {
+      firmLines.push(`• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
+    }
+    if (firmLines.length > 0) {
+      text += `${firmLines.join('\n')}\n`;
+    }
   }
   text += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
   text += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
