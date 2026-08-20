@@ -89,7 +89,7 @@ export async function POST(req: Request) {
           const intent = pageType === 'pendlist' ? 'pending_list' : 'bills';
           const res = await getCompanyDetailByIntent(compName, intent, activeFirm, null, pageNum);
           await answerTelegramCallback(token, callbackId, `Page ${pageNum}`);
-          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
 
           const res = await getCompanyDetailByIntent(compName, intent, activeFirm);
           await answerTelegramCallback(token, callbackId, `Loading ${compName}...`);
-          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
@@ -141,25 +141,25 @@ export async function POST(req: Request) {
           if (cbData === 'quick:pending') {
             const res = await getTopPendingBalances(activeFirm);
             await answerTelegramCallback(token, callbackId);
-            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           if (cbData === 'quick:month_pending') {
             const res = await getMonthlyPendingBills(activeFirm);
             await answerTelegramCallback(token, callbackId);
-            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           if (cbData === 'quick:bills') {
             const res = await getMonthlyBillingSummary(activeFirm);
             await answerTelegramCallback(token, callbackId);
-            await sendTelegramMessage(token, chatId, res.text, res.buttons);
+            await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });
           }
           const filter = cbData === 'quick:workshop' ? 'Workshop' : cbData === 'quick:onsite' ? 'On-Site' : undefined;
           const res = await getFleetStatus(filter, activeFirm);
           await answerTelegramCallback(token, callbackId);
-          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
 
@@ -167,7 +167,7 @@ export async function POST(req: Request) {
         if (cbData === 'menu:firm') {
           const res = await renderFirmSelectionMenu(chatId);
           await answerTelegramCallback(token, callbackId);
-          await sendTelegramMessage(token, chatId, res.text, res.buttons);
+          await dispatchAssistantResponse(token, chatId, res);
           return NextResponse.json({ ok: true });
         }
       }
@@ -368,7 +368,7 @@ export async function POST(req: Request) {
       // ─── 4. ADMIN NATURAL LANGUAGE QUERY ─────────────────────────────────
       if (isAdmin) {
         const response = await processAdminNaturalLanguageQuery(rawText, chatId);
-        await sendTelegramMessage(token, chatId, response.text, response.buttons);
+        await dispatchAssistantResponse(token, chatId, response);
         return NextResponse.json({ ok: true });
       }
 
@@ -384,6 +384,24 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Webhook processing failed:', error);
     return NextResponse.json({ ok: true }); 
+  }
+}
+
+/**
+ * Dispatches single or multi-message Assistant responses to Telegram.
+ */
+async function dispatchAssistantResponse(
+  token: string, 
+  chatId: string, 
+  res: AssistantResponse
+) {
+  if (res.messages && res.messages.length > 0) {
+    for (let i = 0; i < res.messages.length; i++) {
+      const msg = res.messages[i];
+      await sendTelegramMessage(token, chatId, msg.text, msg.buttons);
+    }
+  } else {
+    await sendTelegramMessage(token, chatId, res.text, res.buttons);
   }
 }
 

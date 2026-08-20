@@ -5,9 +5,11 @@
  * 1. Conversational Context & Follow-Up Session Memory (15 min sliding window).
  * 2. Structured Intent & Entity Parsing (Deterministic + Gemini NLU JSON extraction).
  * 3. 100% Deterministic Financial & Business Calculations (Zero hallucination).
- * 4. Multi-Firm Strict Isolation (Vithal vs RV vs Both with full breakdown).
+ * 4. Multi-Firm Strict Isolation & Multi-Message Dispatch:
+ *    - When querying "Both" firms and data exists in both Vithal & RV, outputs TWO separate distinct messages (Vithal message + RV message).
+ *    - If data exists in only 1 firm (e.g. Bisleri only in Vithal), outputs only that 1 firm's message.
  * 5. Formatting Standards:
- *    - Bill Numbers displayed with enterprise suffix: e.g. "1571-MHE" (not just #1571).
+ *    - Bill Numbers displayed with enterprise suffix: e.g. "1571-MHE", "838-RV".
  *    - Icons / Emojis used ONLY in Main Titles & Section Headers.
  *    - Body items formatted as clean indented bullet points ("  • ").
  *    - Horizontal Pending Bill Numbers ("  👉 `1544-MHE`  •  `1569-MHE`").
@@ -23,6 +25,7 @@ export type EnterpriseType = 'Vithal' | 'RV' | 'Both';
 export interface AssistantResponse {
   text: string;
   buttons?: Array<Array<{ text: string; callback_data: string }>>;
+  messages?: Array<{ text: string; buttons?: Array<Array<{ text: string; callback_data: string }>> }>;
 }
 
 export type IntentType =
@@ -711,7 +714,249 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
 }
 
 /**
- * Company details executor with pagination and precise intent views.
+ * Render single firm report for a specific company.
+ */
+function renderSingleFirmCompanyReport(
+  company: CompanySummary,
+  firm: 'Vithal' | 'RV',
+  invoices: ProcessedInvoiceData[],
+  intent: 'count_pending' | 'pending' | 'pending_list' | 'bills' | 'forklifts' | 'all',
+  targetMonth?: { monthKey: string; monthLabel: string } | null,
+  page: number = 1
+): AssistantResponse {
+  const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
+  const monthHeader = targetMonth ? `📅 Period: *${targetMonth.monthLabel}*\n` : '';
+
+  const paidInvoices = invoices.filter(inv => inv.isPaid);
+  const unpaidInvoices = invoices.filter(inv => !inv.isPaid);
+
+  const totalBilled = invoices.reduce((s, i) => s + i.grandTotal, 0);
+  const totalBasic = invoices.reduce((s, i) => s + i.netTotal, 0);
+  const totalGst = invoices.reduce((s, i) => s + i.gstAmount, 0);
+  const totalReceived = invoices.reduce((s, i) => s + i.received, 0);
+  const totalTds = invoices.reduce((s, i) => s + i.tds, 0);
+  const totalOtherDed = invoices.reduce((s, i) => s + i.otherDeductions, 0);
+  const totalDue = invoices.reduce((s, i) => s + i.due, 0);
+
+  // 1. COUNT ONLY VIEW
+  if (intent === 'count_pending') {
+    let text = `${firmTitle}\n`;
+    text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
+    if (monthHeader) text += monthHeader;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (unpaidInvoices.length === 0) {
+      text += `✨ *Pending Bills: 0 (Zero)* 🎉\n`;
+      text += `  • Is firm me is company ke saare ${invoices.length} bills fully clear & settled hain!\n\n`;
+    } else {
+      text += `📊 *PENDING UNPAID BILLS: ${unpaidInvoices.length} INVOICES*\n`;
+      text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
+
+      text += `💰 *ACCOUNT BREAKDOWN:*\n`;
+      text += `  • Total Invoices Generated: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+      text += `  • Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+      text += `  • Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
+
+      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+      text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
+    }
+
+    return {
+      text: text.trim(),
+      buttons: [
+        [
+          { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
+          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+        ],
+        [
+          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+          { text: '🔄 Change Firm', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
+  }
+
+  // 2. PENDING BILLS LIST VIEW
+  if (intent === 'pending_list') {
+    const PAGE_SIZE = 8;
+    const totalPages = Math.ceil(unpaidInvoices.length / PAGE_SIZE) || 1;
+    const currentPage = Math.max(1, Math.min(page, totalPages));
+    const startIndex = (currentPage - 1) * PAGE_SIZE;
+    const pagedInvoices = unpaidInvoices.slice(startIndex, startIndex + PAGE_SIZE);
+
+    let text = `${firmTitle}\n`;
+    text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
+    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length} of ${invoices.length} Total)* (Page ${currentPage}/${totalPages})\n`;
+    if (monthHeader) text += monthHeader;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (unpaidInvoices.length === 0) {
+      text += `✨ *No pending bills! All ${invoices.length} invoices are fully paid.* 🎉\n\n`;
+    } else {
+      pagedInvoices.forEach((inv, idx) => {
+        const isPartial = inv.received > 0;
+        const statusTag = isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
+
+        text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}*\n`;
+        text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+        text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+        text += `  • Received: *₹ ${formatInr(inv.received)}*`;
+        if (inv.tds > 0) text += ` (TDS: ₹ ${formatInr(inv.tds)})`;
+        text += `\n`;
+        text += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
+        text += `  • Status: ${statusTag}\n\n`;
+      });
+
+      text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
+
+      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+      text += `📋 *ALL PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
+    }
+
+    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+    const navRow: Array<{ text: string; callback_data: string }> = [];
+
+    if (currentPage > 1) {
+      navRow.push({ text: '⬅️ Prev', callback_data: `page:pendlist:${company.name}:${currentPage - 1}` });
+    }
+    if (currentPage < totalPages) {
+      navRow.push({ text: 'Next ➡️', callback_data: `page:pendlist:${company.name}:${currentPage + 1}` });
+    }
+    if (navRow.length > 0) {
+      buttons.push(navRow);
+    }
+
+    buttons.push([
+      { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
+      { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+    ]);
+
+    return {
+      text: text.trim(),
+      buttons,
+    };
+  }
+
+  // 3. PENDING BALANCE SUMMARY VIEW
+  if (intent === 'pending') {
+    let text = `${firmTitle}\n`;
+    text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
+    if (monthHeader) text += monthHeader;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    text += `⚠️ *TOTAL OUTSTANDING DUE: ₹ ${formatInr(totalDue)}*\n\n`;
+
+    text += `💰 *FINANCIAL OVERVIEW:*\n`;
+    text += `  • Total Invoices Generated: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+    text += `  • Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+    text += `  • Unpaid / Pending Bills: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n`;
+    if (totalTds > 0) {
+      text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+    }
+    if (totalOtherDed > 0) {
+      text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+    }
+    text += `\n`;
+
+    if (unpaidInvoices.length > 0) {
+      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+      text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
+    }
+
+    return {
+      text: text.trim(),
+      buttons: [
+        [
+          { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
+          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+        ],
+        [
+          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+          { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+        ],
+      ],
+    };
+  }
+
+  // 4. ALL BILLS HISTORY BREAKDOWN VIEW
+  const PAGE_SIZE = 8;
+  const totalPages = Math.ceil(invoices.length / PAGE_SIZE) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const pagedInvoices = invoices.slice(startIndex, startIndex + PAGE_SIZE);
+
+  let text = `${firmTitle}\n`;
+  text += `🏢 Company: *${company.name.toUpperCase()}* (Page ${currentPage}/${totalPages})\n`;
+  if (monthHeader) text += monthHeader;
+  text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  text += `💰 *FINANCIAL SUMMARY:*\n`;
+  text += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
+  text += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
+  text += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${invoices.length} Bills)\n`;
+  text += `  • Total Received: *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Settled)\n`;
+  if (totalTds > 0) {
+    text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+  }
+  if (totalOtherDed > 0) {
+    text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+  }
+  text += `  • Outstanding Due: *₹ ${formatInr(totalDue)}* (${unpaidInvoices.length} Pending)\n\n`;
+
+  text += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  text += `📄 *DETAILED BILLS BREAKDOWN (${invoices.length}):*\n\n`;
+
+  pagedInvoices.forEach((inv, idx) => {
+    const isPaid = inv.isPaid;
+    const isPartial = !isPaid && inv.received > 0;
+    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
+
+    text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}*\n`;
+    text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+    text += `  • Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
+    if (inv.gstAmount > 0) {
+      text += `  • GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
+    }
+    text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    text += `  • Received: *₹ ${formatInr(inv.received)}*\n`;
+    if (inv.tds > 0) {
+      text += `  • TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
+    }
+    text += `  • Outstanding Due: *₹ ${formatInr(inv.due)}*\n`;
+    text += `  • Status: ${statusTag}\n\n`;
+  });
+
+  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+  const navRow: Array<{ text: string; callback_data: string }> = [];
+
+  if (currentPage > 1) {
+    navRow.push({ text: '⬅️ Prev', callback_data: `page:bills:${company.name}:${currentPage - 1}` });
+  }
+  if (currentPage < totalPages) {
+    navRow.push({ text: 'Next ➡️', callback_data: `page:bills:${company.name}:${currentPage + 1}` });
+  }
+  if (navRow.length > 0) {
+    buttons.push(navRow);
+  }
+
+  buttons.push([
+    { text: '⚠️ View Due Summary', callback_data: `comp_pend:${company.name}` },
+    { text: `📋 Only Pending Bills (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
+  ]);
+  buttons.push([
+    { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
+    { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
+  ]);
+
+  return {
+    text: text.trim(),
+    buttons,
+  };
+}
+
+/**
+ * Company details executor with pagination and precise multi-firm separate messaging.
  */
 export async function getCompanyDetailByIntent(
   companyName: string, 
@@ -738,48 +983,65 @@ export async function getCompanyDetailByIntent(
   // ─── 1. FORKLIFTS INTENT ─────────────────────────────────────────────────
   if (intent === 'forklifts') {
     const forkliftsSnap = await getDocs(collection(firestore, 'forklifts'));
-    let companyForklifts = forkliftsSnap.docs
+    const companyForklifts = forkliftsSnap.docs
       .map(d => d.data())
       .filter(f => {
         const site = String(f.siteCompany || '').toLowerCase();
         return site.includes(company.name.toLowerCase()) || company.name.toLowerCase().includes(site);
       });
 
-    if (activeFirm !== 'Both') {
-      companyForklifts = companyForklifts.filter(f => (f.firm || 'Vithal') === activeFirm);
-    }
+    const vithalForks = companyForklifts.filter(f => (f.firm || 'Vithal') === 'Vithal');
+    const rvForks = companyForklifts.filter(f => (f.firm || 'Vithal') === 'RV');
 
-    const firmTag = activeFirm === 'Both' ? 'Vithal & RV' : activeFirm;
-    let msg = `🚜 *FORKLIFTS AT ${company.name.toUpperCase()}*\n`;
-    msg += `🏢 Scope: *${firmTag}* (${companyForklifts.length} Units)\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    const renderForkliftsForFirm = (firm: 'Vithal' | 'RV', list: any[]) => {
+      const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
+      let msg = `${firmTitle}\n`;
+      msg += `🚜 *FORKLIFTS AT ${company.name.toUpperCase()}* (${list.length} Units)\n`;
+      msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-    if (companyForklifts.length === 0) {
-      msg += `_No forklifts currently deployed for ${activeFirm} at this client site._\n`;
-    } else {
-      companyForklifts.forEach((f, idx) => {
-        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
-        msg += `  • Model: *${f.make || ''} ${f.model || ''}*\n`;
-        msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
-        if (f.siteArea) msg += `  • Site Area: *${f.siteArea}*\n`;
-        if (f.siteContactPerson) msg += `  • Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
-        msg += `\n`;
-      });
-    }
-
-    return {
-      text: msg.trim(),
-      buttons: [
-        [
-          { text: '💰 View Pending Bills', callback_data: `comp_pend:${company.name}` },
-          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+      if (list.length === 0) {
+        msg += `_No forklifts currently deployed for ${firm} at this client site._\n`;
+      } else {
+        list.forEach((f, idx) => {
+          msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}*\n`;
+          msg += `  • Model: *${f.make || ''} ${f.model || ''}*\n`;
+          msg += `  • Capacity: *${f.capacity || 'N/A'}*\n`;
+          if (f.siteArea) msg += `  • Site Area: *${f.siteArea}*\n`;
+          if (f.siteContactPerson) msg += `  • Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+          msg += `\n`;
+        });
+      }
+      return {
+        text: msg.trim(),
+        buttons: [
+          [
+            { text: '💰 View Pending Bills', callback_data: `comp_pend:${company.name}` },
+            { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
+          ],
         ],
-        [
-          { text: '🔄 Change Firm', callback_data: 'menu:firm' },
-        ],
-      ],
+      };
     };
+
+    if (activeFirm === 'Vithal') {
+      return renderForkliftsForFirm('Vithal', vithalForks);
+    }
+    if (activeFirm === 'RV') {
+      return renderForkliftsForFirm('RV', rvForks);
+    }
+
+    // Both firms scope
+    if (vithalForks.length > 0 && rvForks.length > 0) {
+      const msg1 = renderForkliftsForFirm('Vithal', vithalForks);
+      const msg2 = renderForkliftsForFirm('RV', rvForks);
+      return {
+        text: msg1.text,
+        messages: [msg1, msg2],
+      };
+    } else if (rvForks.length > 0) {
+      return renderForkliftsForFirm('RV', rvForks);
+    } else {
+      return renderForkliftsForFirm('Vithal', vithalForks);
+    }
   }
 
   // ─── 2. INVOICES & PAYMENTS ──────────────────────────────────────────────
@@ -813,349 +1075,65 @@ export async function getCompanyDetailByIntent(
     }
   });
 
-  const filteredInvoices: ProcessedInvoiceData[] = [];
+  const allProcessedInvoices: ProcessedInvoiceData[] = [];
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
-    const enterprise = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    
-    if (activeFirm !== 'Both' && enterprise !== activeFirm) {
-      return;
-    }
-
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
     if (targetMonth && bMonth && bMonth !== targetMonth.monthKey) {
       return;
     }
-
     const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, company.name);
-    filteredInvoices.push(processed);
+    allProcessedInvoices.push(processed);
   });
 
-  if (filteredInvoices.length === 0) {
-    const monthText = targetMonth ? `for *${targetMonth.monthLabel}*` : '';
-    return {
-      text: `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices found ${monthText} under *${activeFirm === 'Both' ? 'Vithal / RV' : activeFirm}*.`,
-      buttons: [[{ text: '🌐 View All Months / Both Firms', callback_data: 'firm:Both' }]],
-    };
-  }
-
-  filteredInvoices.sort((a, b) => {
+  allProcessedInvoices.sort((a, b) => {
     const timeA = a.date ? new Date(a.date).getTime() : 0;
     const timeB = b.date ? new Date(b.date).getTime() : 0;
-    if (timeA && timeB && timeA !== timeB) {
-      return timeA - timeB;
-    }
+    if (timeA && timeB && timeA !== timeB) return timeA - timeB;
     const billA = parseInt(String(a.billNo), 10) || 0;
     const billB = parseInt(String(b.billNo), 10) || 0;
     return billA - billB;
   });
 
-  const paidInvoices = filteredInvoices.filter(inv => inv.isPaid);
-  const unpaidInvoices = filteredInvoices.filter(inv => !inv.isPaid);
+  const vithalInvoices = allProcessedInvoices.filter(i => i.enterprise === 'Vithal');
+  const rvInvoices = allProcessedInvoices.filter(i => i.enterprise === 'RV');
 
-  const totalBilled = filteredInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const totalBasic = filteredInvoices.reduce((s, i) => s + i.netTotal, 0);
-  const totalGst = filteredInvoices.reduce((s, i) => s + i.gstAmount, 0);
-  const totalReceived = filteredInvoices.reduce((s, i) => s + i.received, 0);
-  const totalTds = filteredInvoices.reduce((s, i) => s + i.tds, 0);
-  const totalOtherDed = filteredInvoices.reduce((s, i) => s + i.otherDeductions, 0);
-  const totalDue = filteredInvoices.reduce((s, i) => s + i.due, 0);
-
-  const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
-  const rvInvoices = filteredInvoices.filter(i => i.enterprise === 'RV');
-
-  const vithalUnpaid = unpaidInvoices.filter(i => i.enterprise === 'Vithal');
-  const rvUnpaid = unpaidInvoices.filter(i => i.enterprise === 'RV');
-
-  const vithalTotal = vithalInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const vithalDue = vithalInvoices.reduce((s, i) => s + i.due, 0);
-
-  const rvTotal = rvInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const rvDue = rvInvoices.reduce((s, i) => s + i.due, 0);
-
-  const firmHeader = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-  const monthHeader = targetMonth ? `📅 Period: *${targetMonth.monthLabel}*\n` : '';
-
-  // ─── 3. COUNT ONLY VIEW ("kitne bills pending hai") ──────────────────────
-  if (intent === 'count_pending') {
-    let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `🏢 Scope: *${firmHeader}*\n`;
-    if (monthHeader) text += monthHeader;
-    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    if (unpaidInvoices.length === 0) {
-      text += `✨ *Pending Bills: 0 (Zero)* 🎉\n`;
-      text += `  • Is company ke saare ${filteredInvoices.length} bills fully clear & settled hain!\n\n`;
-    } else {
-      text += `📊 *PENDING UNPAID BILLS: ${unpaidInvoices.length} INVOICES*\n`;
-      text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
-
-      text += `💰 *ACCOUNT BREAKDOWN:*\n`;
-      text += `  • Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
-      text += `  • Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
-      text += `  • Unpaid / Pending: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n\n`;
-
-      if (unpaidInvoices.length > 0) {
-        const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-        text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
-      }
-
-      if (activeFirm === 'Both') {
-        const firmLines: string[] = [];
-        if (vithalUnpaid.length > 0 || vithalDue > 0) {
-          firmLines.push(`  • Vithal Enterprises: *${vithalUnpaid.length} Bills Pending* (Due ₹ ${formatInr(vithalDue)})`);
-        }
-        if (rvUnpaid.length > 0 || rvDue > 0) {
-          firmLines.push(`  • R.V Enterprises: *${rvUnpaid.length} Bills Pending* (Due ₹ ${formatInr(rvDue)})`);
-        }
-        if (firmLines.length > 0) {
-          text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
-        }
-      }
+  if (activeFirm === 'Vithal') {
+    if (vithalInvoices.length === 0) {
+      return { text: `🏭 *VITHAL ENTERPRISES*\n🏢 Company: *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices found for Vithal Enterprises.` };
     }
+    return renderSingleFirmCompanyReport(company, 'Vithal', vithalInvoices, intent, targetMonth, page);
+  }
 
-    text += `👉 _Agar bills ki list dekhna chahte hain toh neeche button tap karein:_`;
+  if (activeFirm === 'RV') {
+    if (rvInvoices.length === 0) {
+      return { text: `🏢 *R.V ENTERPRISES*\n🏢 Company: *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices found for R.V Enterprises.` };
+    }
+    return renderSingleFirmCompanyReport(company, 'RV', rvInvoices, intent, targetMonth, page);
+  }
 
+  // ─── 3. BOTH FIRMS SCOPE: SEPARATE 2 MESSAGES IF BOTH EXIST ──────────────
+  if (vithalInvoices.length > 0 && rvInvoices.length > 0) {
+    const vithalMsg = renderSingleFirmCompanyReport(company, 'Vithal', vithalInvoices, intent, targetMonth, page);
+    const rvMsg = renderSingleFirmCompanyReport(company, 'RV', rvInvoices, intent, targetMonth, page);
     return {
-      text: text.trim(),
-      buttons: [
-        [
-          { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
-          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
-        ],
-        [
-          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
-          { text: '🔄 Change Firm', callback_data: 'menu:firm' },
-        ],
-      ],
+      text: vithalMsg.text,
+      messages: [vithalMsg, rvMsg],
+      buttons: rvMsg.buttons,
     };
   }
 
-  // ─── 4. PENDING BILLS LIST VIEW ("konse pending hai") ────────────────────
-  if (intent === 'pending_list') {
-    const PAGE_SIZE = 8;
-    const totalPages = Math.ceil(unpaidInvoices.length / PAGE_SIZE) || 1;
-    const currentPage = Math.max(1, Math.min(page, totalPages));
-    const startIndex = (currentPage - 1) * PAGE_SIZE;
-    const pagedInvoices = unpaidInvoices.slice(startIndex, startIndex + PAGE_SIZE);
-
-    let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length} of ${filteredInvoices.length} Total)*\n`;
-    text += `🏢 Scope: *${firmHeader}* (Page ${currentPage}/${totalPages})\n`;
-    if (monthHeader) text += monthHeader;
-    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    if (unpaidInvoices.length === 0) {
-      text += `✨ *No pending bills! All ${filteredInvoices.length} invoices are fully paid.* 🎉\n\n`;
-    } else {
-      pagedInvoices.forEach((inv, idx) => {
-        const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-        const isPartial = inv.received > 0;
-        const statusTag = isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
-
-        text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}* (${firm})\n`;
-        text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
-        text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-        text += `  • Received: *₹ ${formatInr(inv.received)}*`;
-        if (inv.tds > 0) text += ` (TDS: ₹ ${formatInr(inv.tds)})`;
-        text += `\n`;
-        text += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
-        text += `  • Status: ${statusTag}\n\n`;
-      });
-
-      text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `⚠️ *Total Outstanding Balance:* *₹ ${formatInr(totalDue)}*\n\n`;
-
-      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-      text += `📋 *ALL PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
-    }
-
-    if (company.contactNumber || company.kindAttn) {
-      text += `📞 *Contact:* ${company.kindAttn || 'N/A'}`;
-      if (company.contactNumber) text += ` (\`${company.contactNumber}\`)`;
-      text += `\n`;
-    }
-
-    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-    const navRow: Array<{ text: string; callback_data: string }> = [];
-
-    if (currentPage > 1) {
-      navRow.push({ text: '⬅️ Prev', callback_data: `page:pendlist:${company.name}:${currentPage - 1}` });
-    }
-    if (currentPage < totalPages) {
-      navRow.push({ text: 'Next ➡️', callback_data: `page:pendlist:${company.name}:${currentPage + 1}` });
-    }
-    if (navRow.length > 0) {
-      buttons.push(navRow);
-    }
-
-    buttons.push([
-      { text: '📄 View All Invoices', callback_data: `comp_bills:${company.name}` },
-      { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
-    ]);
-    buttons.push([
-      { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
-    ]);
-
-    return {
-      text: text.trim(),
-      buttons,
-    };
+  if (vithalInvoices.length > 0) {
+    return renderSingleFirmCompanyReport(company, 'Vithal', vithalInvoices, intent, targetMonth, page);
   }
 
-  // ─── 5. PENDING BALANCE SUMMARY VIEW ("kitna paisa baki hai") ────────────
-  if (intent === 'pending') {
-    let text = `🏢 *${company.name.toUpperCase()}*\n`;
-    text += `🏢 Scope: *${firmHeader}*\n`;
-    if (monthHeader) text += monthHeader;
-    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    text += `⚠️ *TOTAL OUTSTANDING DUE: ₹ ${formatInr(totalDue)}*\n\n`;
-
-    text += `💰 *FINANCIAL OVERVIEW:*\n`;
-    text += `  • Total Invoices Generated: *${filteredInvoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
-    text += `  • Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
-    text += `  • Unpaid / Pending Bills: *${unpaidInvoices.length} Bills* (₹ ${formatInr(totalDue)})\n`;
-    if (totalTds > 0) {
-      text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
-    }
-    if (totalOtherDed > 0) {
-      text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
-    }
-    text += `\n`;
-
-    if (unpaidInvoices.length > 0) {
-      const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-      text += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
-    }
-
-    if (activeFirm === 'Both') {
-      const firmLines: string[] = [];
-      if (vithalDue > 0 || vithalTotal > 0) {
-        firmLines.push(`  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}* (${vithalUnpaid.length} Pending)`);
-      }
-      if (rvDue > 0 || rvTotal > 0) {
-        firmLines.push(`  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}* (${rvUnpaid.length} Pending)`);
-      }
-      if (firmLines.length > 0) {
-        text += `🏭 *ENTERPRISE BREAKDOWN:*\n${firmLines.join('\n')}\n\n`;
-      }
-    }
-
-    if (company.contactNumber || company.kindAttn) {
-      text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `📞 *Contact Person:* ${company.kindAttn || 'N/A'}\n`;
-      if (company.contactNumber) text += `📱 *Phone:* \`${company.contactNumber}\`\n`;
-    }
-
-    return {
-      text: text.trim(),
-      buttons: [
-        [
-          { text: `📋 Kaun Se Bills Pending Hai (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
-          { text: '📄 All Invoices', callback_data: `comp_bills:${company.name}` },
-        ],
-        [
-          { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
-          { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
-        ],
-      ],
-    };
+  if (rvInvoices.length > 0) {
+    return renderSingleFirmCompanyReport(company, 'RV', rvInvoices, intent, targetMonth, page);
   }
-
-  // ─── 6. ALL BILLS HISTORY BREAKDOWN VIEW ("saare bills") ─────────────────
-  const PAGE_SIZE = 8;
-  const totalPages = Math.ceil(filteredInvoices.length / PAGE_SIZE) || 1;
-  const currentPage = Math.max(1, Math.min(page, totalPages));
-  const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pagedInvoices = filteredInvoices.slice(startIndex, startIndex + PAGE_SIZE);
-
-  let text = `🏢 *${company.name.toUpperCase()}*\n`;
-  text += `🏢 Scope: *${firmHeader}* (Page ${currentPage}/${totalPages})\n`;
-  if (monthHeader) text += monthHeader;
-  text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-  text += `💰 *FINANCIAL SUMMARY:*\n`;
-  if (activeFirm === 'Both') {
-    const firmLines: string[] = [];
-    if (vithalTotal > 0 || vithalDue > 0) {
-      firmLines.push(`  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} | *Due: ₹ ${formatInr(vithalDue)}*`);
-    }
-    if (rvTotal > 0 || rvDue > 0) {
-      firmLines.push(`  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} | *Due: ₹ ${formatInr(rvDue)}*`);
-    }
-    if (firmLines.length > 0) {
-      text += `${firmLines.join('\n')}\n`;
-    }
-  }
-  text += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
-  text += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
-  text += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${filteredInvoices.length} Bills)\n`;
-  text += `  • Total Received: *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Settled)\n`;
-  if (totalTds > 0) {
-    text += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
-  }
-  if (totalOtherDed > 0) {
-    text += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
-  }
-  text += `  • Outstanding Due: *₹ ${formatInr(totalDue)}* (${unpaidInvoices.length} Pending)\n\n`;
-
-  text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  text += `📄 *DETAILED BILLS BREAKDOWN (${filteredInvoices.length}):*\n\n`;
-
-  pagedInvoices.forEach((inv, idx) => {
-    const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-    const isPaid = inv.isPaid;
-    const isPartial = !isPaid && inv.received > 0;
-    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
-
-    text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}* (${firm})\n`;
-    text += `  • Date: *${formatDateReadable(inv.date)}*\n`;
-    text += `  • Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
-    if (inv.gstAmount > 0) {
-      text += `  • GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
-    }
-    text += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-    text += `  • Received: *₹ ${formatInr(inv.received)}*\n`;
-    if (inv.tds > 0) {
-      text += `  • TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
-    }
-    text += `  • Outstanding Due: *₹ ${formatInr(inv.due)}*\n`;
-    text += `  • Status: ${statusTag}\n\n`;
-  });
-
-  if (company.contactNumber || company.kindAttn) {
-    text += `━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `📞 *Contact Person:* ${company.kindAttn || 'N/A'}\n`;
-    if (company.contactNumber) text += `📱 *Phone:* \`${company.contactNumber}\`\n`;
-  }
-
-  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-  const navRow: Array<{ text: string; callback_data: string }> = [];
-
-  if (currentPage > 1) {
-    navRow.push({ text: '⬅️ Prev', callback_data: `page:bills:${company.name}:${currentPage - 1}` });
-  }
-  if (currentPage < totalPages) {
-    navRow.push({ text: 'Next ➡️', callback_data: `page:bills:${company.name}:${currentPage + 1}` });
-  }
-  if (navRow.length > 0) {
-    buttons.push(navRow);
-  }
-
-  buttons.push([
-    { text: '⚠️ View Due Summary', callback_data: `comp_pend:${company.name}` },
-    { text: `📋 Only Pending Bills (${unpaidInvoices.length})`, callback_data: `comp_pendlist:${company.name}` },
-  ]);
-  buttons.push([
-    { text: '🚜 Site Forklifts', callback_data: `comp_fork:${company.name}` },
-    { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
-  ]);
 
   return {
-    text: text.trim(),
-    buttons,
+    text: `🏢 *${company.name.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices found under Vithal or R.V Enterprises.`,
   };
 }
 
@@ -1385,6 +1363,63 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
 }
 
 /**
+ * Render single firm monthly billing report.
+ */
+function renderSingleFirmMonthlyBilling(
+  firm: 'Vithal' | 'RV',
+  invoices: ProcessedInvoiceData[],
+  monthLabel: string
+): AssistantResponse {
+  const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
+
+  const totalBilled = invoices.reduce((s, i) => s + i.grandTotal, 0);
+  const totalBasic = invoices.reduce((s, i) => s + i.netTotal, 0);
+  const totalGst = invoices.reduce((s, i) => s + i.gstAmount, 0);
+  const totalReceived = invoices.reduce((s, i) => s + i.received, 0);
+  const totalTds = invoices.reduce((s, i) => s + i.tds, 0);
+  const totalOtherDed = invoices.reduce((s, i) => s + i.otherDeductions, 0);
+  const totalDue = invoices.reduce((s, i) => s + i.due, 0);
+
+  let msg = `${firmTitle}\n`;
+  msg += `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  msg += `💰 *FINANCIAL SUMMARY:*\n`;
+  msg += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
+  msg += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
+  msg += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${invoices.length} Bills)\n`;
+  msg += `  • Total Received: *₹ ${formatInr(totalReceived)}*\n`;
+  if (totalTds > 0) {
+    msg += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+  }
+  if (totalOtherDed > 0) {
+    msg += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+  }
+  msg += `  • Total Month Due Balance: *₹ ${formatInr(totalDue)}*\n\n`;
+
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `📋 *ALL INVOICES (${invoices.length}):*\n\n`;
+
+  invoices.forEach((inv, idx) => {
+    const isPaid = inv.isPaid;
+    const isPartial = !isPaid && inv.received > 0;
+    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIAL (Due ₹ ${formatInr(inv.due)})` : `⏳ DUE ₹ ${formatInr(inv.due)}`;
+
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}*\n`;
+    msg += `  • Date: *${formatDateReadable(inv.date)}*\n`;
+    msg += `  • Basic: ₹ ${formatInr(inv.netTotal)} | GST: ₹ ${formatInr(inv.gstAmount)}\n`;
+    msg += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    msg += `  • Received: ₹ ${formatInr(inv.received)}`;
+    if (inv.tds > 0) msg += ` (TDS: ₹ ${formatInr(inv.tds)})`;
+    msg += `\n`;
+    msg += `  • Outstanding: *₹ ${formatInr(inv.due)}*\n`;
+    msg += `  • Status: ${statusTag}\n\n`;
+  });
+
+  return { text: msg.trim() };
+}
+
+/**
  * Monthly billing summary with full invoice breakdown.
  */
 export async function getMonthlyBillingSummary(
@@ -1427,9 +1462,6 @@ export async function getMonthlyBillingSummary(
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
-    const ent = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    if (activeFirm !== 'Both' && ent !== activeFirm) return;
-
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
     if (bMonth === monthKey || (inv.billDate && inv.billDate.startsWith(monthKey))) {
       const compName = companyMap.get(inv.companyId) || 'Client Company';
@@ -1438,21 +1470,6 @@ export async function getMonthlyBillingSummary(
     }
   });
 
-  const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-
-  if (monthInvoices.length === 0) {
-    return {
-      text: `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n🏢 Scope: *${firmLabel}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 *No invoices were generated in ${monthLabel} for ${firmLabel}.*`,
-      buttons: [
-        [
-          { text: '🌐 Check Both Firms', callback_data: 'firm:Both' },
-          { text: '⚠️ Top Pending Overall', callback_data: 'quick:pending' },
-        ],
-      ],
-    };
-  }
-
-  // Sort invoices chronologically
   monthInvoices.sort((a, b) => {
     const timeA = a.date ? new Date(a.date).getTime() : 0;
     const timeB = b.date ? new Date(b.date).getTime() : 0;
@@ -1465,78 +1482,82 @@ export async function getMonthlyBillingSummary(
   const vithalInvoices = monthInvoices.filter(i => i.enterprise === 'Vithal');
   const rvInvoices = monthInvoices.filter(i => i.enterprise === 'RV');
 
-  const totalBilled = monthInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const totalBasic = monthInvoices.reduce((s, i) => s + i.netTotal, 0);
-  const totalGst = monthInvoices.reduce((s, i) => s + i.gstAmount, 0);
-  const totalReceived = monthInvoices.reduce((s, i) => s + i.received, 0);
-  const totalTds = monthInvoices.reduce((s, i) => s + i.tds, 0);
-  const totalOtherDed = monthInvoices.reduce((s, i) => s + i.otherDeductions, 0);
-  const totalDue = monthInvoices.reduce((s, i) => s + i.due, 0);
+  if (activeFirm === 'Vithal') {
+    if (vithalInvoices.length === 0) {
+      return { text: `🏭 *VITHAL ENTERPRISES*\n📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices generated in ${monthLabel} for Vithal Enterprises.` };
+    }
+    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
+  }
 
-  const vithalTotal = vithalInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const vithalDue = vithalInvoices.reduce((s, i) => s + i.due, 0);
+  if (activeFirm === 'RV') {
+    if (rvInvoices.length === 0) {
+      return { text: `🏢 *R.V ENTERPRISES*\n📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices generated in ${monthLabel} for R.V Enterprises.` };
+    }
+    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+  }
 
-  const rvTotal = rvInvoices.reduce((s, i) => s + i.grandTotal, 0);
-  const rvDue = rvInvoices.reduce((s, i) => s + i.due, 0);
+  // Both firms scope
+  if (vithalInvoices.length > 0 && rvInvoices.length > 0) {
+    const msg1 = renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
+    const msg2 = renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+    return {
+      text: msg1.text,
+      messages: [msg1, msg2],
+    };
+  }
 
-  let msg = `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n`;
-  msg += `🏢 Scope: *${firmLabel}*\n`;
+  if (vithalInvoices.length > 0) {
+    return renderSingleFirmMonthlyBilling('Vithal', vithalInvoices, monthLabel);
+  }
+
+  if (rvInvoices.length > 0) {
+    return renderSingleFirmMonthlyBilling('RV', rvInvoices, monthLabel);
+  }
+
+  return {
+    text: `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 No invoices were generated in ${monthLabel} for Vithal or R.V Enterprises.`,
+  };
+}
+
+/**
+ * Render single firm monthly pending report.
+ */
+function renderSingleFirmMonthlyPending(
+  firm: 'Vithal' | 'RV',
+  invoices: ProcessedInvoiceData[],
+  monthLabel: string
+): AssistantResponse {
+  const firmTitle = firm === 'RV' ? '🏢 R.V ENTERPRISES' : '🏭 VITHAL ENTERPRISES';
+  const totalPendingDue = invoices.reduce((s, i) => s + i.due, 0);
+
+  let msg = `${firmTitle}\n`;
+  msg += `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  msg += `💰 *${monthLabel.toUpperCase()} FINANCIAL SUMMARY:*\n`;
-  if (activeFirm === 'Both') {
-    if (vithalInvoices.length > 0) {
-      msg += `  • Vithal Enterprises: Billed ₹ ${formatInr(vithalTotal)} (${vithalInvoices.length} Bills) | *Due: ₹ ${formatInr(vithalDue)}*\n`;
-    }
-    if (rvInvoices.length > 0) {
-      msg += `  • R.V Enterprises: Billed ₹ ${formatInr(rvTotal)} (${rvInvoices.length} Bills) | *Due: ₹ ${formatInr(rvDue)}*\n`;
-    }
+  msg += `📊 *SUMMARY:*\n`;
+  msg += `  • Total Unpaid Invoices: *${invoices.length} Bills*\n`;
+  msg += `  • Total Pending Due: *₹ ${formatInr(totalPendingDue)}*\n\n`;
+
+  if (invoices.length > 0) {
+    const billNoTags = invoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
+    msg += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
   }
-  msg += `  • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
-  msg += `  • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
-  msg += `  • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${monthInvoices.length} Bills)\n`;
-  msg += `  • Total Received: *₹ ${formatInr(totalReceived)}*\n`;
-  if (totalTds > 0) {
-    msg += `  • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
-  }
-  if (totalOtherDed > 0) {
-    msg += `  • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
-  }
-  msg += `  • Total Month Due Balance: *₹ ${formatInr(totalDue)}*\n\n`;
 
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `📋 *ALL INVOICES GENERATED IN ${monthLabel.toUpperCase()} (${monthInvoices.length}):*\n\n`;
+  msg += `📋 *UNPAID BILLS LIST (${invoices.length}):*\n\n`;
 
-  monthInvoices.forEach((inv, idx) => {
-    const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    const isPaid = inv.isPaid;
-    const isPartial = !isPaid && inv.received > 0;
-    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIAL (Due ₹ ${formatInr(inv.due)})` : `⏳ DUE ₹ ${formatInr(inv.due)}`;
+  invoices.forEach((inv, idx) => {
+    const isPartial = inv.received > 0;
+    const statusTag = isPartial ? `🟡 PARTIAL (Paid ₹ ${formatInr(inv.received)})` : `⏳ UNPAID`;
 
-    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}* (${firm})\n`;
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}*\n`;
     msg += `  • Date: *${formatDateReadable(inv.date)}*\n`;
-    msg += `  • Basic: ₹ ${formatInr(inv.netTotal)} | GST: ₹ ${formatInr(inv.gstAmount)}\n`;
-    msg += `  • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
-    msg += `  • Received: ₹ ${formatInr(inv.received)}`;
-    if (inv.tds > 0) msg += ` (TDS: ₹ ${formatInr(inv.tds)})`;
-    msg += `\n`;
-    msg += `  • Outstanding: *₹ ${formatInr(inv.due)}*\n`;
+    msg += `  • Grand Total: ₹ ${formatInr(inv.grandTotal)}\n`;
+    msg += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
     msg += `  • Status: ${statusTag}\n\n`;
   });
 
-  return {
-    text: msg.trim(),
-    buttons: [
-      [
-        { text: '⚠️ Only Pending Bills', callback_data: 'quick:month_pending' },
-        { text: '⚠️ Top Debtors Overall', callback_data: 'quick:pending' },
-      ],
-      [
-        { text: '🔄 Switch to Vithal', callback_data: 'firm:Vithal' },
-        { text: '🔄 Switch to RV', callback_data: 'firm:RV' },
-      ],
-    ],
-  };
+  return { text: msg.trim() };
 }
 
 /**
@@ -1582,9 +1603,6 @@ export async function getMonthlyPendingBills(
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
-    const ent = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    if (activeFirm !== 'Both' && ent !== activeFirm) return;
-
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
     if (bMonth === monthKey || (inv.billDate && inv.billDate.startsWith(monthKey))) {
       const compName = companyMap.get(inv.companyId) || 'Client Company';
@@ -1595,21 +1613,6 @@ export async function getMonthlyPendingBills(
     }
   });
 
-  const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-
-  if (pendingInvoices.length === 0) {
-    return {
-      text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n🏢 Scope: *${firmLabel}*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 *${monthLabel} me ${firmLabel} ka koi bhi bill pending nahi hai!* Saare payments clear ho chuke hain.`,
-      buttons: [
-        [
-          { text: '📄 All Bills for ' + monthLabel, callback_data: 'quick:bills' },
-          { text: '⚠️ Top Pending Overall', callback_data: 'quick:pending' },
-        ],
-      ],
-    };
-  }
-
-  // Sort chronologically
   pendingInvoices.sort((a, b) => {
     const timeA = a.date ? new Date(a.date).getTime() : 0;
     const timeB = b.date ? new Date(b.date).getTime() : 0;
@@ -1619,47 +1622,43 @@ export async function getMonthlyPendingBills(
     return billA - billB;
   });
 
-  const totalPendingDue = pendingInvoices.reduce((s, i) => s + i.due, 0);
+  const vithalPending = pendingInvoices.filter(i => i.enterprise === 'Vithal');
+  const rvPending = pendingInvoices.filter(i => i.enterprise === 'RV');
 
-  let msg = `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n`;
-  msg += `🏢 Scope: *${firmLabel}*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-  msg += `📊 *SUMMARY:*\n`;
-  msg += `  • Total Unpaid Invoices: *${pendingInvoices.length} Bills*\n`;
-  msg += `  • Total Pending Due: *₹ ${formatInr(totalPendingDue)}*\n\n`;
-
-  if (pendingInvoices.length > 0) {
-    const billNoTags = pendingInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-    msg += `📋 *PENDING BILL NUMBERS:*\n  👉 ${billNoTags}\n\n`;
+  if (activeFirm === 'Vithal') {
+    if (vithalPending.length === 0) {
+      return { text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n🏭 Scope: *Vithal Enterprises*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 Vithal Enterprises ka koi bhi bill pending nahi hai!` };
+    }
+    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
   }
 
-  msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `📋 *UNPAID BILLS LIST (${pendingInvoices.length}):*\n\n`;
+  if (activeFirm === 'RV') {
+    if (rvPending.length === 0) {
+      return { text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n🏢 Scope: *R.V Enterprises*\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 R.V Enterprises ka koi bhi bill pending nahi hai!` };
+    }
+    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+  }
 
-  pendingInvoices.forEach((inv, idx) => {
-    const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    const isPartial = inv.received > 0;
-    const statusTag = isPartial ? `🟡 PARTIAL (Paid ₹ ${formatInr(inv.received)})` : `⏳ UNPAID`;
+  // Both firms scope
+  if (vithalPending.length > 0 && rvPending.length > 0) {
+    const msg1 = renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
+    const msg2 = renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+    return {
+      text: msg1.text,
+      messages: [msg1, msg2],
+    };
+  }
 
-    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}* (${firm})\n`;
-    msg += `  • Date: *${formatDateReadable(inv.date)}*\n`;
-    msg += `  • Grand Total: ₹ ${formatInr(inv.grandTotal)}\n`;
-    msg += `  • Pending Due: *₹ ${formatInr(inv.due)}*\n`;
-    msg += `  • Status: ${statusTag}\n\n`;
-  });
+  if (vithalPending.length > 0) {
+    return renderSingleFirmMonthlyPending('Vithal', vithalPending, monthLabel);
+  }
+
+  if (rvPending.length > 0) {
+    return renderSingleFirmMonthlyPending('RV', rvPending, monthLabel);
+  }
 
   return {
-    text: msg.trim(),
-    buttons: [
-      [
-        { text: '📄 All Bills (Paid + Pending)', callback_data: 'quick:bills' },
-        { text: '⚠️ Top Debtors Overall', callback_data: 'quick:pending' },
-      ],
-      [
-        { text: '🔄 Change Firm Scope', callback_data: 'menu:firm' },
-      ],
-    ],
+    text: `✨ *ALL BILLS SETTLED IN ${monthLabel.toUpperCase()}!* 🎉\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 *${monthLabel} me koi bhi bill pending nahi hai!* Saare payments clear ho chuke hain.`,
   };
 }
 
@@ -2236,7 +2235,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     // Help
     if (structured.intent === 'help') {
       return {
-        text: `🤖 *VE Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n  • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n  • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n  • *Total Pending Due:* _"Bisleri ka kitna paisa baki hai"_\n  • *Saare Bills:* _"Bisleri bills"_\n  • *Month & Firm Filter:* _"is month ke saare pending bills Vithal ke"_\n  • *Top Debtors Ranking:* _"Top pending"_\n  • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n  • *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n\n👇 *Select Active Firm below:*`,
+        text: `🤖 *VE Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n  • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n  • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n  • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n  • *Top Debtors Ranking:* _"Top pending"_\n  • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n  • *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n\n👇 *Select Active Firm below:*`,
         buttons: renderFirmRadioButtons(activeFirm),
       };
     }
