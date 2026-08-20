@@ -738,70 +738,94 @@ export async function getGeminiApiKey(): Promise<string | null> {
 /**
  * Transcribe Telegram Voice Note / Audio to Text using Gemini Multimodal Audio API.
  */
-export async function transcribeTelegramVoiceAudio(token: string, fileId: string): Promise<string | null> {
+export async function transcribeTelegramVoiceAudio(
+  token: string, 
+  fileId: string
+): Promise<{ success: boolean; text?: string; error?: string }> {
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
-    console.error('No Gemini API key available for voice transcription');
-    return null;
+    return {
+      success: false,
+      error: '❌ *Gemini API Key Missing!*\n\nVoice recognition ke liye Gemini key zaroori hai.\nKripya [Google AI Studio](https://aistudio.google.com/app/apikey) se free key generate karke bot me:\n👉 `/key AIzaSy...` bhejein.',
+    };
   }
 
   try {
     // 1. Get Telegram file path
     const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
-    if (!fileRes.ok) return null;
+    if (!fileRes.ok) {
+      return { success: false, error: `Telegram getFile API error (HTTP ${fileRes.status})` };
+    }
     const fileJson = await fileRes.json();
     const filePath = fileJson.result?.file_path;
-    if (!filePath) return null;
+    if (!filePath) {
+      return { success: false, error: 'Telegram voice file path not found' };
+    }
 
     // 2. Download audio binary
     const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
-    if (!audioRes.ok) return null;
+    if (!audioRes.ok) {
+      return { success: false, error: `Telegram audio download error (HTTP ${audioRes.status})` };
+    }
     const arrayBuffer = await audioRes.arrayBuffer();
     const base64Audio = Buffer.from(arrayBuffer).toString('base64');
 
-    const mimeType = filePath.endsWith('.mp3') ? 'audio/mp3' : 'audio/ogg';
+    const mimeTypesToTry = filePath.endsWith('.mp3')
+      ? ['audio/mp3', 'audio/mpeg']
+      : ['audio/ogg', 'audio/opus', 'audio/ogg; codecs=opus', 'audio/oga'];
+    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest'];
+    const errDetails: string[] = [];
 
-    // 3. Multimodal Voice Understanding with Gemini
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest'];
-    for (const model of models) {
-      try {
-        const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    inline_data: {
-                      mime_type: mimeType,
-                      data: base64Audio,
+    for (const model of modelsToTry) {
+      for (const mimeType of mimeTypesToTry) {
+        try {
+          const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    {
+                      inline_data: {
+                        mime_type: mimeType,
+                        data: base64Audio,
+                      },
                     },
-                  },
-                  {
-                    text: 'Transcribe this spoken Hindi/English/Hinglish audio voice message verbatim into plain text. Only return the transcribed query without preamble, quotes, or markdown formatting.',
-                  },
-                ],
-              },
-            ],
-          }),
-        });
+                    {
+                      text: 'Transcribe this spoken Hindi / English / Hinglish voice query accurately into plain text. Only return the exact transcription without explanation, quotation marks, or markdown.',
+                    },
+                  ],
+                },
+              ],
+            }),
+          });
 
-        if (geminiRes.ok) {
-          const resJson = await geminiRes.json();
-          const transcript = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-          if (transcript) return transcript;
+          if (geminiRes.ok) {
+            const resJson = await geminiRes.json();
+            const transcript = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+            if (transcript) {
+              return { success: true, text: transcript };
+            }
+          } else {
+            const errTxt = await geminiRes.text();
+            errDetails.push(`${model}/${mimeType} (HTTP ${geminiRes.status}): ${errTxt.slice(0, 120)}`);
+          }
+        } catch (e: any) {
+          errDetails.push(`${model}: ${e.message}`);
         }
-      } catch (mErr) {
-        console.error(`Error transcribing with ${model}:`, mErr);
       }
     }
-  } catch (err) {
-    console.error('Error in transcribeTelegramVoiceAudio:', err);
-  }
 
-  return null;
+    return {
+      success: false,
+      error: `⚠️ *Gemini Voice Error:*\n${errDetails[0] || 'Unknown error transcribing audio'}`,
+    };
+  } catch (err: any) {
+    console.error('Error in transcribeTelegramVoiceAudio:', err);
+    return { success: false, error: `Voice processing error: ${err.message}` };
+  }
 }
 
 /**

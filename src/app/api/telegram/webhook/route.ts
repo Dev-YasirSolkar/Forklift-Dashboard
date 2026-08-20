@@ -207,12 +207,12 @@ export async function POST(req: Request) {
         const fileId = message.voice?.file_id || message.audio?.file_id;
         if (fileId) {
           await sendTelegramMessage(token, chatId, `🎙️ *Voice message sun rahe hain...* ⏳`);
-          const transcribed = await transcribeTelegramVoiceAudio(token, fileId);
-          if (transcribed) {
-            rawText = transcribed.trim();
+          const result = await transcribeTelegramVoiceAudio(token, fileId);
+          if (result.success && result.text) {
+            rawText = result.text.trim();
             await sendTelegramMessage(token, chatId, `🗣️ *Aapne poocha:* _"${rawText}"_`);
           } else {
-            await sendTelegramMessage(token, chatId, `⚠️ *Voice message recognize nahi ho saka.* Kripya dobara clear aawaz me bole ya text me likhein.`);
+            await sendTelegramMessage(token, chatId, result.error || `⚠️ *Voice message recognize nahi ho saka.* Kripya dobara clear aawaz me bole ya text me likhein.`);
             return NextResponse.json({ ok: true });
           }
         }
