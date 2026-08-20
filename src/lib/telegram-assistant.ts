@@ -1,9 +1,10 @@
 /**
  * @fileOverview Super Smart AI-Powered Telegram Assistant Engine
  * Integrates Google Gemini AI with live Firestore business data for deep natural language understanding (Hinglish/Hindi/English).
+ * Unified calculation engine matching web dashboard payments logic 100%.
  * Specialized intent handlers for:
  * 1. "Kitne bills pending hai" -> Count of pending bills & total due balance only.
- * 2. "Konse pending hai" -> Specific unpaid bills of that company only.
+ * 2. "Konse pending hai" -> Specific unpaid bills (due > 0) only.
  * 3. "Is month ke saare pending bills [firm] ke" -> Filtered strictly by that Month, that Firm, and only unpaid bills.
  */
 
@@ -26,6 +27,24 @@ interface CompanySummary {
   gstin?: string;
   kindAttn?: string;
   contactNumber?: string;
+}
+
+export interface ProcessedInvoiceData {
+  id: string;
+  companyId: string;
+  companyName: string;
+  billNo: number | string;
+  date: string;
+  billingMonth: string;
+  enterprise: 'Vithal' | 'RV';
+  netTotal: number;
+  gstAmount: number;
+  grandTotal: number;
+  received: number;
+  tds: number;
+  otherDeductions: number;
+  due: number;
+  isPaid: boolean;
 }
 
 // In-memory cache for fast lookups
@@ -95,6 +114,59 @@ function getBigrams(str: string): string[] {
     bigrams.push(s.slice(i, i + 2));
   }
   return bigrams;
+}
+
+/**
+ * Common robust calculator matching the payments page exactly.
+ */
+function calculateInvoiceDue(
+  invoiceDoc: any, 
+  invoiceId: string, 
+  paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }>,
+  companyName: string = 'Company'
+): ProcessedInvoiceData {
+  const inv = invoiceDoc;
+  const enterprise: 'Vithal' | 'RV' = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
+  const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
+
+  const payData = paymentsByInvoice[invoiceId] || { received: 0, tds: 0, otherDeductions: 0 };
+  const advanceReceived = Number(inv.advanceReceived || 0);
+  const totalReceived = payData.received + advanceReceived;
+  const totalDeductions = payData.otherDeductions;
+
+  const taxableAmount = inv.discountType === 'before_gst' 
+    ? (Number(inv.netTotal || 0) - Number(inv.discount || 0)) 
+    : Number(inv.netTotal || 0);
+  const tdsPercentage = Number(inv.tdsPercentage || 0);
+  const calculatedTds = (taxableAmount * tdsPercentage) / 100;
+  const totalTds = Math.max(calculatedTds, payData.tds);
+
+  const grandTotal = Number(inv.grandTotal || 0);
+  const netTotal = Number(inv.netTotal || (grandTotal > 0 ? (grandTotal / 1.18) : 0));
+  const gstAmount = Math.max(0, grandTotal - netTotal);
+
+  const totalCredited = totalReceived + totalDeductions + totalTds;
+  const rawBalance = grandTotal - totalCredited;
+  const finalBalance = Math.max(0, Math.round(rawBalance));
+  const isPaid = finalBalance <= 1;
+
+  return {
+    id: invoiceId,
+    companyId: inv.companyId || '',
+    companyName,
+    billNo: inv.billNo || 'N/A',
+    date: inv.billDate || inv.billingMonth || '',
+    billingMonth: bMonth,
+    enterprise,
+    netTotal,
+    gstAmount,
+    grandTotal,
+    received: totalReceived,
+    tds: totalTds,
+    otherDeductions: totalDeductions,
+    due: finalBalance,
+    isPaid,
+  };
 }
 
 /**
@@ -422,40 +494,36 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both')
     companyMap.set(d.id, String(d.data().name || 'Unknown Company'));
   });
 
-  const invoiceBalanceMap: Record<string, { companyId: string; enterprise: string; billed: number; received: number }> = {};
+  const paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }> = {};
+  paymentsSnap.docs.forEach(d => {
+    const pay = d.data();
+    if (pay.invoiceId) {
+      if (!paymentsByInvoice[pay.invoiceId]) {
+        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      }
+      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+    }
+  });
+
+  const companyDueMap = new Map<string, { name: string; billed: number; received: number; due: number; pendingBillsCount: number }>();
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
     const ent = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
     if (activeFirm !== 'Both' && ent !== activeFirm) return;
 
-    invoiceBalanceMap[d.id] = {
-      companyId: inv.companyId,
-      enterprise: ent,
-      billed: Number(inv.grandTotal || 0),
-      received: 0,
-    };
-  });
-
-  paymentsSnap.docs.forEach(d => {
-    const pay = d.data();
-    if (pay.invoiceId && invoiceBalanceMap[pay.invoiceId]) {
-      const rec = Number(pay.receivedAmount || 0);
-      const tds = Number(pay.tdsDeducted || 0);
-      const oth = Number(pay.otherDeductions || 0);
-      invoiceBalanceMap[pay.invoiceId].received += (rec + tds + oth);
-    }
-  });
-
-  const companyDueMap = new Map<string, { name: string; billed: number; received: number; due: number }>();
-
-  Object.values(invoiceBalanceMap).forEach(inv => {
     const compName = companyMap.get(inv.companyId) || 'Unknown Company';
-    const due = Math.max(0, inv.billed - inv.received);
-    const existing = companyDueMap.get(inv.companyId) || { name: compName, billed: 0, received: 0, due: 0 };
-    existing.billed += inv.billed;
-    existing.received += inv.received;
-    existing.due += due;
+    const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, compName);
+
+    const existing = companyDueMap.get(inv.companyId) || { name: compName, billed: 0, received: 0, due: 0, pendingBillsCount: 0 };
+    existing.billed += processed.grandTotal;
+    existing.received += processed.received;
+    existing.due += processed.due;
+    if (!processed.isPaid) {
+      existing.pendingBillsCount += 1;
+    }
     companyDueMap.set(inv.companyId, existing);
   });
 
@@ -478,7 +546,7 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both')
 
   sortedDebtors.slice(0, 10).forEach((c, idx) => {
     msg += `${idx + 1}️⃣ *${c.name}*\n`;
-    msg += `• ⚠️ Pending Due: *₹ ${formatInr(c.due)}*\n`;
+    msg += `• ⚠️ Pending Due: *₹ ${formatInr(c.due)}* (${c.pendingBillsCount} Bills)\n`;
     msg += `• 💰 Total Billed: ₹ ${formatInr(c.billed)} | Received: ₹ ${formatInr(c.received)}\n\n`;
 
     if (idx < 5) {
@@ -583,7 +651,7 @@ export async function getCompanyDetailByIntent(
   const invoicesQuery = query(collection(firestore, 'invoices'), where('companyId', '==', companyId));
   const [invoicesSnap, paymentsSnap] = await Promise.all([
     getDocs(invoicesQuery),
-    getDocs(query(collection(firestore, 'payments'), where('companyId', '==', companyId)))
+    getDocs(collection(firestore, 'payments'))
   ]);
 
   if (invoicesSnap.empty) {
@@ -596,22 +664,20 @@ export async function getCompanyDetailByIntent(
     return { text: msg };
   }
 
-  interface DetailedInvoice {
-    id: string;
-    billNo: number | string;
-    date: string;
-    billingMonth: string;
-    enterprise: string;
-    netTotal: number;
-    gstAmount: number;
-    grandTotal: number;
-    received: number;
-    tds: number;
-    otherDeductions: number;
-    due: number;
-  }
+  const paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }> = {};
+  paymentsSnap.docs.forEach(d => {
+    const pay = d.data();
+    if (pay.invoiceId) {
+      if (!paymentsByInvoice[pay.invoiceId]) {
+        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      }
+      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+    }
+  });
 
-  const invoiceMap: Record<string, DetailedInvoice> = {};
+  const filteredInvoices: ProcessedInvoiceData[] = [];
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
@@ -622,45 +688,13 @@ export async function getCompanyDetailByIntent(
     }
 
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
-
     if (targetMonth && bMonth && bMonth !== targetMonth.monthKey) {
       return;
     }
 
-    const grandTotal = Number(inv.grandTotal || 0);
-    const netTotal = Number(inv.netTotal || (grandTotal > 0 ? (grandTotal / 1.18) : 0));
-    const gstAmount = Math.max(0, grandTotal - netTotal);
-
-    invoiceMap[d.id] = {
-      id: d.id,
-      billNo: inv.billNo || 'N/A',
-      date: inv.billDate || inv.billingMonth || '',
-      billingMonth: bMonth,
-      enterprise,
-      netTotal,
-      gstAmount,
-      grandTotal,
-      received: 0,
-      tds: 0,
-      otherDeductions: 0,
-      due: grandTotal,
-    };
+    const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, company.name);
+    filteredInvoices.push(processed);
   });
-
-  paymentsSnap.docs.forEach(d => {
-    const pay = d.data();
-    if (pay.invoiceId && invoiceMap[pay.invoiceId]) {
-      const rec = Number(pay.receivedAmount || 0);
-      const tds = Number(pay.tdsDeducted || 0);
-      const oth = Number(pay.otherDeductions || 0);
-      invoiceMap[pay.invoiceId].received += rec;
-      invoiceMap[pay.invoiceId].tds += tds;
-      invoiceMap[pay.invoiceId].otherDeductions += oth;
-      invoiceMap[pay.invoiceId].due = Math.max(0, invoiceMap[pay.invoiceId].grandTotal - (invoiceMap[pay.invoiceId].received + invoiceMap[pay.invoiceId].tds + invoiceMap[pay.invoiceId].otherDeductions));
-    }
-  });
-
-  const filteredInvoices = Object.values(invoiceMap);
 
   if (filteredInvoices.length === 0) {
     const monthText = targetMonth ? `for *${targetMonth.monthLabel}*` : '';
@@ -681,7 +715,7 @@ export async function getCompanyDetailByIntent(
     return billA - billB;
   });
 
-  const unpaidInvoices = filteredInvoices.filter(inv => inv.due > 1);
+  const unpaidInvoices = filteredInvoices.filter(inv => !inv.isPaid);
 
   const totalBilled = filteredInvoices.reduce((s, i) => s + i.grandTotal, 0);
   const totalBasic = filteredInvoices.reduce((s, i) => s + i.netTotal, 0);
@@ -689,7 +723,7 @@ export async function getCompanyDetailByIntent(
   const totalReceived = filteredInvoices.reduce((s, i) => s + i.received, 0);
   const totalTds = filteredInvoices.reduce((s, i) => s + i.tds, 0);
   const totalOtherDed = filteredInvoices.reduce((s, i) => s + i.otherDeductions, 0);
-  const totalDue = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDed));
+  const totalDue = filteredInvoices.reduce((s, i) => s + i.due, 0);
 
   const vithalInvoices = filteredInvoices.filter(i => i.enterprise === 'Vithal');
   const rvInvoices = filteredInvoices.filter(i => i.enterprise === 'RV');
@@ -899,7 +933,7 @@ export async function getCompanyDetailByIntent(
   } else {
     displayInvoices.forEach((inv, idx) => {
       const firm = inv.enterprise === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
-      const isPaid = inv.due <= 1;
+      const isPaid = inv.isPaid;
       const isPartial = !isPaid && inv.received > 0;
       const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID (Due ₹ ${formatInr(inv.due)})` : `⏳ UNPAID (Due ₹ ${formatInr(inv.due)})`;
 
@@ -1166,23 +1200,20 @@ export async function getMonthlyBillingSummary(
     companyMap.set(d.id, String(d.data().name || 'Client Company'));
   });
 
-  interface MonthlyInvoiceItem {
-    id: string;
-    companyId: string;
-    companyName: string;
-    billNo: number | string;
-    date: string;
-    enterprise: string;
-    netTotal: number;
-    gstAmount: number;
-    grandTotal: number;
-    received: number;
-    tds: number;
-    otherDeductions: number;
-    due: number;
-  }
+  const paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }> = {};
+  paymentsSnap.docs.forEach(d => {
+    const pay = d.data();
+    if (pay.invoiceId) {
+      if (!paymentsByInvoice[pay.invoiceId]) {
+        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      }
+      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+    }
+  });
 
-  const monthInvoicesMap: Record<string, MonthlyInvoiceItem> = {};
+  const monthInvoices: ProcessedInvoiceData[] = [];
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
@@ -1191,42 +1222,11 @@ export async function getMonthlyBillingSummary(
 
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
     if (bMonth === monthKey || (inv.billDate && inv.billDate.startsWith(monthKey))) {
-      const grandTotal = Number(inv.grandTotal || 0);
-      const netTotal = Number(inv.netTotal || (grandTotal > 0 ? (grandTotal / 1.18) : 0));
-      const gstAmount = Math.max(0, grandTotal - netTotal);
-
-      monthInvoicesMap[d.id] = {
-        id: d.id,
-        companyId: inv.companyId,
-        companyName: companyMap.get(inv.companyId) || 'Client Company',
-        billNo: inv.billNo || 'N/A',
-        date: inv.billDate || inv.billingMonth || '',
-        enterprise: ent,
-        netTotal,
-        gstAmount,
-        grandTotal,
-        received: 0,
-        tds: 0,
-        otherDeductions: 0,
-        due: grandTotal,
-      };
+      const compName = companyMap.get(inv.companyId) || 'Client Company';
+      const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, compName);
+      monthInvoices.push(processed);
     }
   });
-
-  paymentsSnap.docs.forEach(d => {
-    const pay = d.data();
-    if (pay.invoiceId && monthInvoicesMap[pay.invoiceId]) {
-      const rec = Number(pay.receivedAmount || 0);
-      const tds = Number(pay.tdsDeducted || 0);
-      const oth = Number(pay.otherDeductions || 0);
-      monthInvoicesMap[pay.invoiceId].received += rec;
-      monthInvoicesMap[pay.invoiceId].tds += tds;
-      monthInvoicesMap[pay.invoiceId].otherDeductions += oth;
-      monthInvoicesMap[pay.invoiceId].due = Math.max(0, monthInvoicesMap[pay.invoiceId].grandTotal - (monthInvoicesMap[pay.invoiceId].received + monthInvoicesMap[pay.invoiceId].tds + monthInvoicesMap[pay.invoiceId].otherDeductions));
-    }
-  });
-
-  const monthInvoices = Object.values(monthInvoicesMap);
 
   const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
@@ -1261,7 +1261,7 @@ export async function getMonthlyBillingSummary(
   const totalReceived = monthInvoices.reduce((s, i) => s + i.received, 0);
   const totalTds = monthInvoices.reduce((s, i) => s + i.tds, 0);
   const totalOtherDed = monthInvoices.reduce((s, i) => s + i.otherDeductions, 0);
-  const totalDue = Math.max(0, totalBilled - (totalReceived + totalTds + totalOtherDed));
+  const totalDue = monthInvoices.reduce((s, i) => s + i.due, 0);
 
   const vithalTotal = vithalInvoices.reduce((s, i) => s + i.grandTotal, 0);
   const vithalDue = vithalInvoices.reduce((s, i) => s + i.due, 0);
@@ -1275,8 +1275,12 @@ export async function getMonthlyBillingSummary(
 
   msg += `💰 *${monthLabel.toUpperCase()} FINANCIAL SUMMARY:*\n`;
   if (activeFirm === 'Both') {
-    msg += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} (${vithalInvoices.length} Bills) | *Due: ₹ ${formatInr(vithalDue)}*\n`;
-    msg += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} (${rvInvoices.length} Bills) | *Due: ₹ ${formatInr(rvDue)}*\n`;
+    if (vithalInvoices.length > 0) {
+      msg += `• 🏭 *Vithal Enterprises:* Billed ₹ ${formatInr(vithalTotal)} (${vithalInvoices.length} Bills) | *Due: ₹ ${formatInr(vithalDue)}*\n`;
+    }
+    if (rvInvoices.length > 0) {
+      msg += `• 🏢 *R.V Enterprises:* Billed ₹ ${formatInr(rvTotal)} (${rvInvoices.length} Bills) | *Due: ₹ ${formatInr(rvDue)}*\n`;
+    }
   }
   msg += `• 💵 *Total Basic / Taxable:* *₹ ${formatInr(totalBasic)}*\n`;
   msg += `• 🔖 *Total GST (CGST+SGST):* *₹ ${formatInr(totalGst)}*\n`;
@@ -1295,7 +1299,7 @@ export async function getMonthlyBillingSummary(
 
   monthInvoices.forEach((inv, idx) => {
     const firm = inv.enterprise === 'RV' ? 'RV' : 'Vithal';
-    const isPaid = inv.due <= 1;
+    const isPaid = inv.isPaid;
     const isPartial = !isPaid && inv.received > 0;
     const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIAL (Due ₹ ${formatInr(inv.due)})` : `⏳ DUE ₹ ${formatInr(inv.due)}`;
 
@@ -1351,23 +1355,20 @@ export async function getMonthlyPendingBills(
     companyMap.set(d.id, String(d.data().name || 'Client Company'));
   });
 
-  interface MonthlyInvoiceItem {
-    id: string;
-    companyId: string;
-    companyName: string;
-    billNo: number | string;
-    date: string;
-    enterprise: string;
-    netTotal: number;
-    gstAmount: number;
-    grandTotal: number;
-    received: number;
-    tds: number;
-    otherDeductions: number;
-    due: number;
-  }
+  const paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }> = {};
+  paymentsSnap.docs.forEach(d => {
+    const pay = d.data();
+    if (pay.invoiceId) {
+      if (!paymentsByInvoice[pay.invoiceId]) {
+        paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+      }
+      paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
+      paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
+      paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
+    }
+  });
 
-  const monthInvoicesMap: Record<string, MonthlyInvoiceItem> = {};
+  const pendingInvoices: ProcessedInvoiceData[] = [];
 
   invoicesSnap.docs.forEach(d => {
     const inv = d.data();
@@ -1376,42 +1377,14 @@ export async function getMonthlyPendingBills(
 
     const bMonth = inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '');
     if (bMonth === monthKey || (inv.billDate && inv.billDate.startsWith(monthKey))) {
-      const grandTotal = Number(inv.grandTotal || 0);
-      const netTotal = Number(inv.netTotal || (grandTotal > 0 ? (grandTotal / 1.18) : 0));
-      const gstAmount = Math.max(0, grandTotal - netTotal);
-
-      monthInvoicesMap[d.id] = {
-        id: d.id,
-        companyId: inv.companyId,
-        companyName: companyMap.get(inv.companyId) || 'Client Company',
-        billNo: inv.billNo || 'N/A',
-        date: inv.billDate || inv.billingMonth || '',
-        enterprise: ent,
-        netTotal,
-        gstAmount,
-        grandTotal,
-        received: 0,
-        tds: 0,
-        otherDeductions: 0,
-        due: grandTotal,
-      };
+      const compName = companyMap.get(inv.companyId) || 'Client Company';
+      const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, compName);
+      if (!processed.isPaid) {
+        pendingInvoices.push(processed);
+      }
     }
   });
 
-  paymentsSnap.docs.forEach(d => {
-    const pay = d.data();
-    if (pay.invoiceId && monthInvoicesMap[pay.invoiceId]) {
-      const rec = Number(pay.receivedAmount || 0);
-      const tds = Number(pay.tdsDeducted || 0);
-      const oth = Number(pay.otherDeductions || 0);
-      monthInvoicesMap[pay.invoiceId].received += rec;
-      monthInvoicesMap[pay.invoiceId].tds += tds;
-      monthInvoicesMap[pay.invoiceId].otherDeductions += oth;
-      monthInvoicesMap[pay.invoiceId].due = Math.max(0, monthInvoicesMap[pay.invoiceId].grandTotal - (monthInvoicesMap[pay.invoiceId].received + monthInvoicesMap[pay.invoiceId].tds + monthInvoicesMap[pay.invoiceId].otherDeductions));
-    }
-  });
-
-  const pendingInvoices = Object.values(monthInvoicesMap).filter(inv => inv.due > 1);
   const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
   if (pendingInvoices.length === 0) {
@@ -1555,17 +1528,22 @@ async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<str
     const empMap = new Map<string, string>();
     employeesSnap.docs.forEach(d => empMap.set(d.id, String(d.data().fullName || 'Employee')));
 
-    // Financial aggregation per company
-    const compDueMap = new Map<string, { billed: number; received: number; due: number; billsCount: number; unpaidCount: number }>();
-    const invoicePaymentMap = new Map<string, number>();
-
+    // Index all payments by invoiceId
+    const paymentsByInvoice: Record<string, { received: number; tds: number; otherDeductions: number }> = {};
     paymentsSnap.docs.forEach(d => {
-      const p = d.data();
-      if (p.invoiceId) {
-        const totalPaid = Number(p.receivedAmount || 0) + Number(p.tdsDeducted || 0) + Number(p.otherDeductions || 0);
-        invoicePaymentMap.set(p.invoiceId, (invoicePaymentMap.get(p.invoiceId) || 0) + totalPaid);
+      const pay = d.data();
+      if (pay.invoiceId) {
+        if (!paymentsByInvoice[pay.invoiceId]) {
+          paymentsByInvoice[pay.invoiceId] = { received: 0, tds: 0, otherDeductions: 0 };
+        }
+        paymentsByInvoice[pay.invoiceId].received += Number(pay.receivedAmount || 0);
+        paymentsByInvoice[pay.invoiceId].tds += Number(pay.tdsDeducted || 0);
+        paymentsByInvoice[pay.invoiceId].otherDeductions += Number(pay.otherDeductions || 0);
       }
     });
+
+    // Financial aggregation per company
+    const compDueMap = new Map<string, { billed: number; received: number; due: number; billsCount: number; unpaidCount: number }>();
 
     invoicesSnap.docs.forEach(d => {
       const inv = d.data();
@@ -1573,16 +1551,16 @@ async function buildLiveBusinessContext(activeFirm: EnterpriseType): Promise<str
       if (activeFirm !== 'Both' && ent !== activeFirm) return;
 
       const compName = companyMap.get(inv.companyId) || 'Unknown Client';
-      const grand = Number(inv.grandTotal || 0);
-      const paid = invoicePaymentMap.get(d.id) || 0;
-      const due = Math.max(0, grand - paid);
+      const processed = calculateInvoiceDue(inv, d.id, paymentsByInvoice, compName);
 
       const existing = compDueMap.get(compName) || { billed: 0, received: 0, due: 0, billsCount: 0, unpaidCount: 0 };
-      existing.billed += grand;
-      existing.received += paid;
-      existing.due += due;
+      existing.billed += processed.grandTotal;
+      existing.received += processed.received;
+      existing.due += processed.due;
       existing.billsCount += 1;
-      if (due > 1) existing.unpaidCount += 1;
+      if (!processed.isPaid) {
+        existing.unpaidCount += 1;
+      }
       compDueMap.set(compName, existing);
     });
 
