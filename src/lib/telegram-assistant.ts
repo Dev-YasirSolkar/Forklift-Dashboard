@@ -860,41 +860,42 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
   const totalOutstandingWithoutTds = sortedDebtors.reduce((s, c) => s + c.dueWithoutTds, 0);
   const firmLabel = activeFirm === 'Both' ? 'Vithal & R.V Enterprises' : activeFirm === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
-  const headers = ['#', 'CLIENT COMPANY', 'BILLS', 'DUE (NET)'];
-  const rows = sortedDebtors.slice(0, limitCount).map((c, idx) => [
-    String(idx + 1),
-    c.name.length > 20 ? c.name.slice(0, 18) + '..' : c.name,
-    `${c.pendingBillsCount} Bills`,
-    `₹ ${formatInr(c.dueWithTds)}`,
-  ]);
-  const alignments: ('left' | 'right' | 'center')[] = ['center', 'left', 'center', 'right'];
-
   let msg = `⚠️ *TOP OUTSTANDING DUE RANKING*\n`;
-  msg += `🏢 Scope: *${firmLabel}*\n\n`;
-  msg += renderAsciiBoxTable(headers, rows, alignments) + `\n\n`;
+  msg += `🏢 Scope: *${firmLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const marketSummary = renderKeyValueSectionsBoxTable([
-    {
-      title: 'MARKET OUTSTANDING TOTALS',
-      pairs: [
-        ['Net Due (With TDS)', `₹ ${formatInr(totalOutstandingWithTds)}`],
-        ['Gross Due (Without TDS)', `₹ ${formatInr(totalOutstandingWithoutTds)}`],
-        ['Total Pending Debtors', `${sortedDebtors.length} Clients`],
-      ],
-    },
-  ]);
-  msg += marketSummary + `\n\n`;
+  msg += `💰 *MARKET OUTSTANDING SUMMARY:*\n`;
+  msg += `      • Net Outstanding (With TDS): *₹ ${formatInr(totalOutstandingWithTds)}*\n`;
+  msg += `      • Gross Outstanding (Without TDS): *₹ ${formatInr(totalOutstandingWithoutTds)}*\n`;
+  msg += `      • Total Debtors: *${sortedDebtors.length} Clients*\n`;
+  msg += `─────────────────────\n\n`;
+
+  msg += `📊 *TOP ${Math.min(limitCount, sortedDebtors.length)} PENDING CLIENTS:*\n\n`;
 
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  sortedDebtors.slice(0, Math.min(5, limitCount)).forEach(c => {
-    buttons.push([
-      {
-        text: `🏢 ${c.name.length > 25 ? c.name.slice(0, 22) + '...' : c.name} (₹${formatInr(c.dueWithTds)})`,
-        callback_data: `comp_select:${c.name}`,
-      },
-    ]);
+  sortedDebtors.slice(0, limitCount).forEach((c, idx) => {
+    msg += `${idx + 1}️⃣ *${c.name}*\n`;
+    msg += `      • Net Due (With TDS): *₹ ${formatInr(c.dueWithTds)}* (${c.pendingBillsCount} Bills)\n`;
+    msg += `      • Gross Due (Without TDS): *₹ ${formatInr(c.dueWithoutTds)}*\n`;
+    msg += `      • Total Billed: ₹ ${formatInr(c.billed)} | Received: ₹ ${formatInr(c.received)}\n`;
+    msg += `─────────────────────\n\n`;
+
+    if (idx < 5) {
+      buttons.push([
+        {
+          text: `🏢 ${c.name.length > 24 ? c.name.slice(0, 22) + '...' : c.name} (₹${formatInr(c.dueWithTds)})`,
+          callback_data: `comp_select:${c.name}`,
+        },
+      ]);
+    }
   });
+
+  if (sortedDebtors.length > limitCount) {
+    msg += `_...and ${sortedDebtors.length - limitCount} more clients with smaller pending amounts._\n\n`;
+  }
+
+  msg += `👉 *Tap any client button below for complete bill details:*`;
 
   return {
     text: msg.trim(),
@@ -903,7 +904,7 @@ export async function getTopPendingBalances(activeFirm: EnterpriseType = 'Both',
 }
 
 /**
- * Render single firm report for a specific company with Both TDS Options & Solid Unicode Box Tables.
+ * Render single firm report for a specific company with Both TDS Options & Clean Indented Formatting.
  */
 function renderSingleFirmCompanyReport(
   company: CompanySummary,
@@ -933,35 +934,28 @@ function renderSingleFirmCompanyReport(
     let text = `${firmTitle}\n`;
     text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
     if (monthHeader) text += monthHeader;
-    text += `\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (unpaidInvoices.length === 0) {
       text += `✨ *Pending Bills: 0 (Zero)* 🎉\n`;
-      text += `All ${invoices.length} invoices are fully clear & settled!\n`;
+      text += `      • Is firm me is company ke saare ${invoices.length} bills fully clear & settled hain!\n`;
+      text += `─────────────────────\n\n`;
     } else {
-      const summaryTable = renderKeyValueSectionsBoxTable([
-        {
-          title: 'OUTSTANDING DUE',
-          pairs: [
-            ['Net Due (With TDS)', `₹ ${formatInr(totalDueWithTds)}`],
-            ['Gross Due (Without TDS)', `₹ ${formatInr(totalDueWithoutTds)}`],
-            ['Total TDS Deducted', `₹ ${formatInr(totalTds)}`],
-          ],
-        },
-        {
-          title: 'FINANCIAL OVERVIEW',
-          pairs: [
-            ['Total Invoiced', `${invoices.length} (₹ ${formatInr(totalBilled)})`],
-            ['Fully Settled', `${paidInvoices.length} (₹ ${formatInr(totalReceived)})`],
-            ['Unpaid / Pending', `${unpaidInvoices.length} Bills`],
-          ],
-        },
-      ]);
+      text += `📊 *PENDING UNPAID BILLS: ${unpaidInvoices.length} INVOICES*\n`;
+      text += `⚠️ *Net Balance (With TDS Deducted):* *₹ ${formatInr(totalDueWithTds)}*\n`;
+      text += `💰 *Gross Balance (Without TDS Deducted):* *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+      text += `─────────────────────\n\n`;
 
-      text += summaryTable + `\n\n`;
+      text += `💰 *ACCOUNT BREAKDOWN:*\n`;
+      text += `      • Total Invoices Generated: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+      text += `      • Fully Paid / Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+      text += `      • Unpaid / Pending: *${unpaidInvoices.length} Bills*\n`;
+      text += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+      text += `─────────────────────\n\n`;
 
       const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-      text += `📋 *PENDING BILL NUMBERS:*\n👉 ${billNoTags}\n`;
+      text += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+      text += `─────────────────────\n\n`;
     }
 
     return {
@@ -994,35 +988,35 @@ function renderSingleFirmCompanyReport(
     text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
     text += `📋 *PENDING UNPAID BILLS (${unpaidInvoices.length} of ${invoices.length} Total)* (Page ${currentPage}/${totalPages})\n`;
     if (monthHeader) text += monthHeader;
-    text += `\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (unpaidInvoices.length === 0) {
       text += `✨ *No pending bills! All ${invoices.length} invoices are fully paid.* 🎉\n`;
+      text += `─────────────────────\n\n`;
     } else {
-      const headers = ['BILL NO.', 'DATE', 'GRAND(₹)', 'DUE(NET)'];
-      const rows = pagedInvoices.map(inv => [
-        inv.billNoFormatted,
-        formatDateReadable(inv.date),
-        formatInr(inv.grandTotal),
-        formatInr(inv.dueWithTds),
-      ]);
-      const alignments: ('left' | 'right' | 'center')[] = ['left', 'center', 'right', 'right'];
+      pagedInvoices.forEach((inv, idx) => {
+        const isPartial = inv.received > 0;
+        const statusTag = isPartial ? `🟡 PARTIALLY PAID` : `⏳ UNPAID`;
 
-      text += renderAsciiBoxTable(headers, rows, alignments) + `\n\n`;
+        text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}*\n`;
+        text += `      • Date: *${formatDateReadable(inv.date)}*\n`;
+        text += `      • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+        text += `      • Received: *₹ ${formatInr(inv.received)}*\n`;
+        text += `      • TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
+        text += `      • Due (Without TDS): *₹ ${formatInr(inv.dueWithoutTds)}*\n`;
+        text += `      • Due (With TDS): *₹ ${formatInr(inv.dueWithTds)}*\n`;
+        text += `      • Status: ${statusTag}\n`;
+        text += `─────────────────────\n\n`;
+      });
 
-      const totalsTable = renderKeyValueSectionsBoxTable([
-        {
-          title: 'OUTSTANDING TOTALS',
-          pairs: [
-            ['Net Due (With TDS)', `₹ ${formatInr(totalDueWithTds)}`],
-            ['Gross Due (Without TDS)', `₹ ${formatInr(totalDueWithoutTds)}`],
-          ],
-        },
-      ]);
-      text += totalsTable + `\n\n`;
+      text += `⚠️ *OUTSTANDING BALANCE TOTALS:*\n`;
+      text += `      • Net Due (With TDS): *₹ ${formatInr(totalDueWithTds)}*\n`;
+      text += `      • Gross Due (Without TDS): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+      text += `─────────────────────\n\n`;
 
       const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-      text += `📋 *ALL PENDING BILL NUMBERS:*\n👉 ${billNoTags}\n`;
+      text += `📋 *ALL PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+      text += `─────────────────────\n\n`;
     }
 
     const buttons: Array<Array<TelegramButton>> = [];
@@ -1057,33 +1051,27 @@ function renderSingleFirmCompanyReport(
     let text = `${firmTitle}\n`;
     text += `🏢 Company: *${company.name.toUpperCase()}*\n`;
     if (monthHeader) text += monthHeader;
-    text += `\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-    const summaryTable = renderKeyValueSectionsBoxTable([
-      {
-        title: 'OUTSTANDING DUE',
-        pairs: [
-          ['Net Due (With TDS)', `₹ ${formatInr(totalDueWithTds)}`],
-          ['Gross Due (Without TDS)', `₹ ${formatInr(totalDueWithoutTds)}`],
-          ['Total TDS Deducted', `₹ ${formatInr(totalTds)}`],
-        ],
-      },
-      {
-        title: 'FINANCIAL OVERVIEW',
-        pairs: [
-          ['Total Invoices', `${invoices.length} (₹ ${formatInr(totalBilled)})`],
-          ['Fully Settled', `${paidInvoices.length} (₹ ${formatInr(totalReceived)})`],
-          ['Unpaid / Pending', `${unpaidInvoices.length} Bills`],
-          ...(totalOtherDed > 0 ? [['Other Deductions', `₹ ${formatInr(totalOtherDed)}`] as [string, string]] : []),
-        ],
-      },
-    ]);
+    text += `⚠️ *TOTAL OUTSTANDING DUE:*\n`;
+    text += `      • Net Balance (With TDS Deducted): *₹ ${formatInr(totalDueWithTds)}*\n`;
+    text += `      • Gross Balance (Without TDS Deducted): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+    text += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+    text += `─────────────────────\n\n`;
 
-    text += summaryTable + `\n\n`;
+    text += `💰 *FINANCIAL OVERVIEW:*\n`;
+    text += `      • Total Invoices Generated: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+    text += `      • Fully Paid Invoices: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+    text += `      • Unpaid / Pending Bills: *${unpaidInvoices.length} Bills*\n`;
+    if (totalOtherDed > 0) {
+      text += `      • Other Deductions: *₹ ${formatInr(totalOtherDed)}*\n`;
+    }
+    text += `─────────────────────\n\n`;
 
     if (unpaidInvoices.length > 0) {
       const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-      text += `📋 *PENDING BILL NUMBERS:*\n👉 ${billNoTags}\n`;
+      text += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+      text += `─────────────────────\n\n`;
     }
 
     return {
@@ -1114,41 +1102,41 @@ function renderSingleFirmCompanyReport(
   let text = `${firmTitle}\n`;
   text += `🏢 Company: *${company.name.toUpperCase()}* (Page ${currentPage}/${totalPages})\n`;
   if (monthHeader) text += monthHeader;
-  text += `\n`;
+  text += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const summaryTable = renderKeyValueSectionsBoxTable([
-    {
-      title: 'FINANCIAL SUMMARY',
-      pairs: [
-        ['Total Basic / Taxable', `₹ ${formatInr(totalBasic)}`],
-        ['Total GST (CGST+SGST)', `₹ ${formatInr(totalGst)}`],
-        ['Total Grand Invoiced', `₹ ${formatInr(totalBilled)} (${invoices.length} Bills)`],
-        ['Total Received', `₹ ${formatInr(totalReceived)} (${paidInvoices.length} Settled)`],
-        ['Total TDS Deducted', `₹ ${formatInr(totalTds)}`],
-        ['Net Due (With TDS)', `₹ ${formatInr(totalDueWithTds)} (${unpaidInvoices.length} Pending)`],
-        ['Gross Due (Without TDS)', `₹ ${formatInr(totalDueWithoutTds)}`],
-      ],
-    },
-  ]);
+  text += `💰 *FINANCIAL SUMMARY:*\n`;
+  text += `      • Total Basic / Taxable: *₹ ${formatInr(totalBasic)}*\n`;
+  text += `      • Total GST (CGST+SGST): *₹ ${formatInr(totalGst)}*\n`;
+  text += `      • Total Grand Invoiced: *₹ ${formatInr(totalBilled)}* (${invoices.length} Bills)\n`;
+  text += `      • Total Received: *₹ ${formatInr(totalReceived)}* (${paidInvoices.length} Settled)\n`;
+  text += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+  text += `      • Net Due (With TDS): *₹ ${formatInr(totalDueWithTds)}* (${unpaidInvoices.length} Pending)\n`;
+  text += `      • Gross Due (Without TDS): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+  text += `─────────────────────\n\n`;
 
-  text += summaryTable + `\n\n`;
+  text += `📄 *DETAILED BILLS BREAKDOWN (${invoices.length}):*\n\n`;
 
-  const headers = ['BILL NO.', 'DATE', 'GRAND(₹)', 'STATUS'];
-  const rows = pagedInvoices.map(inv => {
+  pagedInvoices.forEach((inv, idx) => {
     const isPaid = inv.isPaid;
     const isPartial = !isPaid && inv.received > 0;
-    const statusText = isPaid ? 'PAID' : isPartial ? 'PARTIAL' : 'DUE';
-    return [
-      inv.billNoFormatted,
-      formatDateReadable(inv.date),
-      formatInr(inv.grandTotal),
-      statusText,
-    ];
-  });
-  const alignments: ('left' | 'right' | 'center')[] = ['left', 'center', 'right', 'center'];
+    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIALLY PAID` : `⏳ UNPAID`;
 
-  text += `📋 *INVOICES (Page ${currentPage}/${totalPages}):*\n`;
-  text += renderAsciiBoxTable(headers, rows, alignments) + `\n`;
+    text += `${startIndex + idx + 1}️⃣ *Bill ${inv.billNoFormatted}*\n`;
+    text += `      • Date: *${formatDateReadable(inv.date)}*\n`;
+    text += `      • Basic Amount: *₹ ${formatInr(inv.netTotal)}*\n`;
+    if (inv.gstAmount > 0) {
+      text += `      • GST: *₹ ${formatInr(inv.gstAmount)}*\n`;
+    }
+    text += `      • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    text += `      • Received: *₹ ${formatInr(inv.received)}*\n`;
+    if (inv.tds > 0) {
+      text += `      • TDS Deducted: *₹ ${formatInr(inv.tds)}*\n`;
+    }
+    text += `      • Due (Without TDS): *₹ ${formatInr(inv.dueWithoutTds)}*\n`;
+    text += `      • Due (With TDS): *₹ ${formatInr(inv.dueWithTds)}*\n`;
+    text += `      • Status: ${statusTag}\n`;
+    text += `─────────────────────\n\n`;
+  });
 
   const buttons: Array<Array<TelegramButton>> = [];
   const navRow: Array<TelegramButton> = [];
@@ -1409,20 +1397,20 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
 
   if (locationFilter === 'Workshop') {
     let msg = `🏭 *WORKSHOP IDLE FORKLIFTS (${workshop.length})*\n`;
-    msg += `🏢 Scope: *${firmLabel}*\n\n`;
+    msg += `🏢 Scope: *${firmLabel}*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (workshop.length === 0) {
       msg += `_No forklifts currently idle in workshop for ${activeFirm}._\n`;
     } else {
-      const headers = ['#', 'SERIAL NO.', 'FIRM', 'MAKE / MODEL'];
-      const rows = workshop.map((f, idx) => [
-        String(idx + 1),
-        String(f.serialNumber || 'N/A'),
-        (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal',
-        `${f.make || ''} ${f.model || ''}`.trim() || 'Forklift',
-      ]);
-      const alignments: ('left' | 'right' | 'center')[] = ['center', 'left', 'center', 'left'];
-      msg += renderAsciiBoxTable(headers, rows, alignments) + `\n`;
+      workshop.forEach((f, idx) => {
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
+        msg += `      • Model: *${f.make || ''} ${f.model || ''}*\n`;
+        msg += `      • Capacity: *${f.capacity || 'N/A'}*\n`;
+        msg += `      • Location: *Workshop*\n`;
+        msg += `─────────────────────\n\n`;
+      });
     }
 
     return {
@@ -1438,26 +1426,21 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
 
   if (locationFilter === 'On-Site') {
     let msg = `📍 *ON-SITE DEPLOYED FORKLIFTS (${onSite.length})*\n`;
-    msg += `🏢 Scope: *${firmLabel}*\n\n`;
+    msg += `🏢 Scope: *${firmLabel}*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (onSite.length === 0) {
       msg += `_No forklifts currently deployed on-site for ${activeFirm}._\n`;
     } else {
-      const headers = ['#', 'SERIAL NO.', 'CLIENT SITE', 'FIRM'];
-      const rows = onSite.slice(0, 15).map((f, idx) => {
+      onSite.forEach((f, idx) => {
         const site = f.siteCompany || f.siteArea || 'Client Site';
-        return [
-          String(idx + 1),
-          String(f.serialNumber || 'N/A'),
-          site.length > 18 ? site.slice(0, 16) + '..' : site,
-          (f.firm || 'Vithal') === 'RV' ? 'RV' : 'Vithal',
-        ];
+        const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
+        msg += `${idx + 1}️⃣ *Serial #${f.serialNumber}* (${firm})\n`;
+        msg += `      • Client Site: *${site}*\n`;
+        msg += `      • Capacity: *${f.capacity || 'N/A'}*\n`;
+        if (f.siteArea) msg += `      • Area: *${f.siteArea}*\n`;
+        msg += `─────────────────────\n\n`;
       });
-      const alignments: ('left' | 'right' | 'center')[] = ['center', 'left', 'left', 'center'];
-      msg += renderAsciiBoxTable(headers, rows, alignments) + `\n`;
-      if (onSite.length > 15) {
-        msg += `_...and ${onSite.length - 15} more units deployed across sites._\n`;
-      }
     }
 
     return {
@@ -1474,22 +1457,19 @@ export async function getFleetStatus(locationFilter?: 'Workshop' | 'On-Site', ac
   const utilRate = all.length > 0 ? ((onSite.length / all.length) * 100).toFixed(0) : '0';
 
   let msg = `🚜 *TOTAL FLEET OVERVIEW*\n`;
-  msg += `🏢 Scope: *${firmLabel}*\n\n`;
+  msg += `🏢 Scope: *${firmLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const fleetSummaryTable = renderKeyValueSectionsBoxTable([
-    {
-      title: 'FLEET BREAKDOWN',
-      pairs: [
-        ['Total Fleet Units', `${all.length} Units`],
-        ['On-Site (Deployed)', `${onSite.length} Units`],
-        ['Workshop (Idle)', `${workshop.length} Units`],
-        ...(notConfirmed.length > 0 ? [['Unconfirmed Status', `${notConfirmed.length} Units`] as [string, string]] : []),
-        ['Fleet Utilization', `${utilRate}%`],
-      ],
-    },
-  ]);
+  msg += `📊 *FLEET BREAKDOWN:*\n`;
+  msg += `      • Total Fleet: *${all.length} Units*\n`;
+  msg += `      • On-Site (Deployed): *${onSite.length} Units*\n`;
+  msg += `      • Workshop (Idle): *${workshop.length} Units*\n`;
+  if (notConfirmed.length > 0) {
+    msg += `      • Unconfirmed: *${notConfirmed.length} Units*\n`;
+  }
+  msg += `      • Fleet Utilization: *${utilRate}%*\n`;
+  msg += `─────────────────────\n\n`;
 
-  msg += fleetSummaryTable + `\n\n`;
   msg += `_Tap a button below to view detailed lists:_`;
 
   return {
@@ -1526,32 +1506,25 @@ export async function getForkliftDetail(serialQuery: string): Promise<AssistantR
   const f = matched.data();
   const firm = (f.firm || 'Vithal') === 'RV' ? 'R.V Enterprises' : 'Vithal Enterprises';
 
-  let msg = `🚜 *FORKLIFT DETAILS: #${f.serialNumber}*\n\n`;
+  let msg = `🚜 *FORKLIFT DETAILS: #${f.serialNumber}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `      • Firm: *${firm}*\n`;
+  msg += `      • Make / Model: *${f.make || ''} ${f.model || ''}*\n`;
+  msg += `      • Capacity: *${f.capacity || 'N/A'}*\n`;
+  msg += `      • Location: *${f.locationType || 'N/A'}*\n`;
+  if (f.locationType === 'On-Site') {
+    msg += `      • Client Site: *${f.siteCompany || 'N/A'}*\n`;
+    if (f.siteArea) msg += `      • Area: *${f.siteArea}*\n`;
+    if (f.siteContactPerson) msg += `      • Contact: *${f.siteContactPerson}* (${f.siteContactNumber || ''})\n`;
+  }
+  if (f.remarks) msg += `      • Remarks: _${f.remarks}_\n`;
+  msg += `─────────────────────\n`;
 
-  const table = renderKeyValueSectionsBoxTable([
-    {
-      title: `FORKLIFT #${f.serialNumber}`,
-      pairs: [
-        ['Firm Enterprise', firm],
-        ['Make / Model', `${f.make || ''} ${f.model || ''}`.trim() || 'N/A'],
-        ['Capacity', f.capacity || 'N/A'],
-        ['Location Status', f.locationType || 'N/A'],
-        ...(f.locationType === 'On-Site' ? [
-          ['Client Site', f.siteCompany || 'N/A'] as [string, string],
-          ...(f.siteArea ? [['Site Area', f.siteArea] as [string, string]] : []),
-          ...(f.siteContactPerson ? [['Contact Person', f.siteContactPerson] as [string, string]] : []),
-        ] : []),
-        ...(f.remarks ? [['Remarks', f.remarks] as [string, string]] : []),
-      ],
-    },
-  ]);
-
-  msg += table;
   return { text: msg.trim() };
 }
 
 /**
- * Attendance summary executor with clean box tables.
+ * Attendance summary executor.
  */
 export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'present' = 'all'): Promise<AssistantResponse> {
   const firestore = await getAuthenticatedFirestore();
@@ -1578,53 +1551,62 @@ export async function getTodayAttendanceSummary(mode: 'all' | 'absent' | 'presen
   });
 
   if (mode === 'absent') {
-    let msg = `🔴 *ABSENT STAFF TODAY (${formatDateReadable(today)})*\n\n`;
+    let msg = `🔴 *ABSENT STAFF TODAY (${formatDateReadable(today)})*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
     if (absent.length === 0) {
       msg += `✨ *All staff members are present today!* 🎉\n`;
     } else {
-      const headers = ['#', 'ABSENT EMPLOYEE NAME'];
-      const rows = absent.map((name, i) => [String(i + 1), name]);
-      msg += renderAsciiBoxTable(headers, rows, ['center', 'left']) + `\n`;
+      msg += `Total Absent: *${absent.length} Staff*\n\n`;
+      absent.forEach((name, i) => {
+        msg += `      ${i + 1}. *${name}*\n`;
+      });
     }
+    msg += `─────────────────────\n`;
     return { text: msg.trim() };
   }
 
   if (mode === 'present') {
-    let msg = `🟢 *PRESENT STAFF TODAY (${formatDateReadable(today)})*\n\n`;
-    const headers = ['#', 'PRESENT EMPLOYEE NAME'];
-    const rows = present.map((name, i) => [String(i + 1), name]);
-    msg += renderAsciiBoxTable(headers, rows, ['center', 'left']) + `\n`;
+    let msg = `🟢 *PRESENT STAFF TODAY (${formatDateReadable(today)})*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    msg += `Total Present: *${present.length} Staff*\n\n`;
+    present.forEach((name, i) => {
+      msg += `      ${i + 1}. *${name}*\n`;
+    });
+    msg += `─────────────────────\n`;
     return { text: msg.trim() };
   }
 
-  let msg = `📅 *ATTENDANCE TODAY (${formatDateReadable(today)})*\n\n`;
+  let msg = `📅 *ATTENDANCE TODAY (${formatDateReadable(today)})*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const attSummaryTable = renderKeyValueSectionsBoxTable([
-    {
-      title: 'ATTENDANCE SUMMARY',
-      pairs: [
-        ['Total Registered Staff', `${empSnap.size} Staff`],
-        ['Present Staff', `${present.length} Staff`],
-        ['Absent Staff', `${absent.length} Staff`],
-        ...(halfDay.length > 0 ? [['Half-Day Staff', `${halfDay.length} Staff`] as [string, string]] : []),
-      ],
-    },
-  ]);
-
-  msg += attSummaryTable + `\n\n`;
+  msg += `👥 *ATTENDANCE SUMMARY:*\n`;
+  msg += `      • Total Staff: *${empSnap.size}*\n`;
+  msg += `      • Present: *${present.length}*\n`;
+  msg += `      • Absent: *${absent.length}*\n`;
+  if (halfDay.length > 0) {
+    msg += `      • Half-Day: *${halfDay.length}*\n`;
+  }
+  msg += `─────────────────────\n\n`;
 
   if (absent.length > 0) {
     msg += `🔴 *ABSENT STAFF (${absent.length}):*\n`;
-    const headers = ['#', 'ABSENT EMPLOYEE NAME'];
-    const rows = absent.map((name, i) => [String(i + 1), name]);
-    msg += renderAsciiBoxTable(headers, rows, ['center', 'left']) + `\n`;
+    absent.forEach((name, i) => {
+      msg += `      ${i + 1}. *${name}*\n`;
+    });
+    msg += `─────────────────────\n\n`;
+  }
+
+  if (present.length > 0) {
+    msg += `🟢 *PRESENT STAFF (${present.length}):*\n`;
+    msg += `      • ${present.join(', ')}\n`;
+    msg += `─────────────────────\n`;
   }
 
   return { text: msg.trim() };
 }
 
 /**
- * Render single firm monthly billing report with solid unicode box tables.
+ * Render single firm monthly billing report.
  */
 function renderSingleFirmMonthlyBilling(
   firm: 'Vithal' | 'RV',
@@ -1645,27 +1627,24 @@ function renderSingleFirmMonthlyBilling(
   const unpaidInvoices = invoices.filter(i => !i.isPaid);
 
   let msg = `${firmTitle}\n`;
-  msg += `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n\n`;
+  msg += `📊 *BILLING STATEMENT - ${monthLabel.toUpperCase()}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const summaryTable = renderKeyValueSectionsBoxTable([
-    {
-      title: 'MONTH FINANCIAL SUMMARY',
-      pairs: [
-        ['Total Grand Invoiced', `₹ ${formatInr(totalBilled)} (${invoices.length} Bills)`],
-        ['Total Basic / Taxable', `₹ ${formatInr(totalBasic)}`],
-        ['Total GST (CGST+SGST)', `₹ ${formatInr(totalGst)}`],
-        ['Total Received', `₹ ${formatInr(totalReceived)} (${paidInvoices.length} Settled)`],
-        ['Total TDS Deducted', `₹ ${formatInr(totalTds)}`],
-        ['Net Due (With TDS)', `₹ ${formatInr(totalDueWithTds)} (${unpaidInvoices.length} Pending)`],
-        ['Gross Due (Without TDS)', `₹ ${formatInr(totalDueWithoutTds)}`],
-      ],
-    },
-  ]);
-  msg += summaryTable + `\n\n`;
+  msg += `💰 *FINANCIAL SUMMARY:*\n`;
+  msg += `      • Total Invoices: *${invoices.length} Bills* (₹ ${formatInr(totalBilled)})\n`;
+  msg += `      • Fully Settled: *${paidInvoices.length} Bills* (₹ ${formatInr(totalReceived)})\n`;
+  msg += `      • Unpaid / Pending: *${unpaidInvoices.length} Bills*\n`;
+  msg += `      • Net Due (With TDS): *₹ ${formatInr(totalDueWithTds)}*\n`;
+  msg += `      • Gross Due (Without TDS): *₹ ${formatInr(totalDueWithoutTds)}*\n`;
+  if (totalTds > 0) {
+    msg += `      • Total TDS Deducted: *₹ ${formatInr(totalTds)}*\n`;
+  }
+  msg += `─────────────────────\n\n`;
 
   if (unpaidInvoices.length > 0) {
     const billNoTags = unpaidInvoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-    msg += `📋 *PENDING BILL NUMBERS:*\n👉 ${billNoTags}\n\n`;
+    msg += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+    msg += `─────────────────────\n\n`;
   }
 
   // When user just asked "kitne bills hai" or requested a summary, don't dump long text!
@@ -1685,22 +1664,25 @@ function renderSingleFirmMonthlyBilling(
   }
 
   // Detailed list when user asks "konse konse bills" or "dikhao"
-  const headers = ['BILL NO.', 'PARTY', 'GRAND(₹)', 'STATUS'];
-  const rows = invoices.map(inv => {
+  msg += `📋 *ALL INVOICES BREAKDOWN (${invoices.length}):*\n\n`;
+
+  invoices.forEach((inv, idx) => {
     const isPaid = inv.isPaid;
     const isPartial = !isPaid && inv.received > 0;
-    const statusText = isPaid ? 'PAID' : isPartial ? 'PARTIAL' : 'DUE';
-    return [
-      inv.billNoFormatted,
-      inv.companyName.length > 15 ? inv.companyName.slice(0, 13) + '..' : inv.companyName,
-      formatInr(inv.grandTotal),
-      statusText,
-    ];
-  });
-  const alignments: ('left' | 'right' | 'center')[] = ['left', 'left', 'right', 'center'];
+    const statusTag = isPaid ? '✅ PAID' : isPartial ? `🟡 PARTIAL` : `⏳ DUE`;
 
-  msg += `📋 *ALL INVOICES (${invoices.length}):*\n`;
-  msg += renderAsciiBoxTable(headers, rows, alignments) + `\n`;
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}*\n`;
+    msg += `      • Date: *${formatDateReadable(inv.date)}*\n`;
+    msg += `      • Basic: ₹ ${formatInr(inv.netTotal)} | GST: ₹ ${formatInr(inv.gstAmount)}\n`;
+    msg += `      • Grand Total: *₹ ${formatInr(inv.grandTotal)}*\n`;
+    msg += `      • Received: ₹ ${formatInr(inv.received)}`;
+    if (inv.tds > 0) msg += ` (TDS: ₹ ${formatInr(inv.tds)})`;
+    msg += `\n`;
+    msg += `      • Due (With TDS): *₹ ${formatInr(inv.dueWithTds)}*\n`;
+    msg += `      • Due (Without TDS): *₹ ${formatInr(inv.dueWithoutTds)}*\n`;
+    msg += `      • Status: ${statusTag}\n`;
+    msg += `─────────────────────\n\n`;
+  });
 
   return {
     text: msg.trim(),
@@ -1817,7 +1799,7 @@ export async function getMonthlyBillingSummary(
 }
 
 /**
- * Render single firm monthly pending report with solid unicode box tables.
+ * Render single firm monthly pending report.
  */
 function renderSingleFirmMonthlyPending(
   firm: 'Vithal' | 'RV',
@@ -1830,23 +1812,19 @@ function renderSingleFirmMonthlyPending(
   const totalPendingDueWithoutTds = invoices.reduce((s, i) => s + i.dueWithoutTds, 0);
 
   let msg = `${firmTitle}\n`;
-  msg += `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n\n`;
+  msg += `⚠️ *PENDING BILLS - ${monthLabel.toUpperCase()}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  const summaryTable = renderKeyValueSectionsBoxTable([
-    {
-      title: 'PENDING FINANCIALS',
-      pairs: [
-        ['Total Pending Invoices', `${invoices.length} Bills`],
-        ['Net Due (With TDS)', `₹ ${formatInr(totalPendingDueWithTds)}`],
-        ['Gross Due (Without TDS)', `₹ ${formatInr(totalPendingDueWithoutTds)}`],
-      ],
-    },
-  ]);
-  msg += summaryTable + `\n\n`;
+  msg += `📊 *PENDING SUMMARY:*\n`;
+  msg += `      • Total Unpaid Invoices: *${invoices.length} Bills*\n`;
+  msg += `      • Net Due (With TDS): *₹ ${formatInr(totalPendingDueWithTds)}*\n`;
+  msg += `      • Gross Due (Without TDS): *₹ ${formatInr(totalPendingDueWithoutTds)}*\n`;
+  msg += `─────────────────────\n\n`;
 
   if (invoices.length > 0) {
     const billNoTags = invoices.map(inv => `\`${inv.billNoFormatted}\``).join('  •  ');
-    msg += `📋 *PENDING BILL NUMBERS:*\n👉 ${billNoTags}\n\n`;
+    msg += `📋 *PENDING BILL NUMBERS:*\n      👉 ${billNoTags}\n`;
+    msg += `─────────────────────\n\n`;
   }
 
   if (detailLevel !== 'detailed') {
@@ -1863,17 +1841,22 @@ function renderSingleFirmMonthlyPending(
     };
   }
 
-  const headers = ['BILL NO.', 'PARTY', 'GRAND(₹)', 'DUE(NET)'];
-  const rows = invoices.map(inv => [
-    inv.billNoFormatted,
-    inv.companyName.length > 15 ? inv.companyName.slice(0, 13) + '..' : inv.companyName,
-    formatInr(inv.grandTotal),
-    formatInr(inv.dueWithTds),
-  ]);
-  const alignments: ('left' | 'right' | 'center')[] = ['left', 'left', 'right', 'right'];
+  msg += `📋 *UNPAID BILLS LIST (${invoices.length}):*\n\n`;
 
-  msg += `📋 *UNPAID BILLS LIST (${invoices.length}):*\n`;
-  msg += renderAsciiBoxTable(headers, rows, alignments) + `\n`;
+  invoices.forEach((inv, idx) => {
+    const isPartial = inv.received > 0;
+    const statusTag = isPartial ? `🟡 PARTIAL` : `⏳ UNPAID`;
+
+    msg += `${idx + 1}️⃣ *Bill ${inv.billNoFormatted}* • *${inv.companyName}*\n`;
+    msg += `      • Date: *${formatDateReadable(inv.date)}*\n`;
+    msg += `      • Grand Total: ₹ ${formatInr(inv.grandTotal)}\n`;
+    msg += `      • Received: ₹ ${formatInr(inv.received)}\n`;
+    msg += `      • TDS Deducted: ₹ ${formatInr(inv.tds)}\n`;
+    msg += `      • Due (With TDS): *₹ ${formatInr(inv.dueWithTds)}*\n`;
+    msg += `      • Due (Without TDS): *₹ ${formatInr(inv.dueWithoutTds)}*\n`;
+    msg += `      • Status: ${statusTag}\n`;
+    msg += `─────────────────────\n\n`;
+  });
 
   return {
     text: msg.trim(),
