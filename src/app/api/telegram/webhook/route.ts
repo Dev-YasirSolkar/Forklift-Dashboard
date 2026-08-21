@@ -224,6 +224,10 @@ export async function POST(req: Request) {
 
       const lowerText = rawText.toLowerCase();
 
+      // ─── 1. DIRECT PASSCODE / ADMIN UNLOCK (/2028 or 2028) ───────────────
+      const isSecretCode = lowerText === '/2028' || lowerText === '2028' || lowerText.includes('2028');
+      const isAdminCommand = lowerText.startsWith('/admin') || lowerText.startsWith('admin') || lowerText.startsWith('/login');
+
       if (isSecretCode || isAdminCommand) {
         const parts = rawText.split(/\s+/);
         const secretOrEmail = isSecretCode ? '2028' : (parts.find((p: string) => p.includes('2028') || p.includes('@')) || '2028');
