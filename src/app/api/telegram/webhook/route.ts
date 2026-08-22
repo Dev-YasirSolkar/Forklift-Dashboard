@@ -45,10 +45,27 @@ const monthMap: Record<string, string> = {
   'dec': '12', 'december': '12'
 };
 
+async function getTelegramToken(): Promise<string | null> {
+  if (process.env.TELEGRAM_BOT_TOKEN) return process.env.TELEGRAM_BOT_TOKEN;
+
+  try {
+    const firestore = await getAuthenticatedFirestore();
+    const snap = await getDoc(doc(firestore, 'companySettings', 'telegram'));
+    if (snap.exists() && snap.data()?.botToken) {
+      return snap.data().botToken;
+    }
+  } catch (err) {
+    console.error('Failed to get Telegram Bot Token:', err);
+  }
+
+  return null;
+}
+
 export async function POST(req: Request) {
-  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
+  const token = await getTelegramToken();
   
   if (!token) {
+    console.error('Telegram Bot Token is not configured.');
     return NextResponse.json({ ok: false, error: 'Bot token missing' }, { status: 500 });
   }
 

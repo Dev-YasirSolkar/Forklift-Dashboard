@@ -1,15 +1,35 @@
 'use server';
 
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { firebaseConfig } from '@/firebase/config';
+
 /**
  * @fileOverview Telegram Bot Server Actions
- * Handles sending documents and managing bot webhooks.
+ * Handles sending documents and managing bot webhooks securely.
  */
 
-export async function sendTelegramDocument(chatId: string, base64Data: string, fileName: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
-  if (!token) {
-    throw new Error('Telegram Bot Token is not configured.');
+async function getTelegramToken(): Promise<string> {
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    return process.env.TELEGRAM_BOT_TOKEN;
   }
+
+  try {
+    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+    const db = getFirestore(app);
+    const snap = await getDoc(doc(db, 'companySettings', 'telegram'));
+    if (snap.exists() && snap.data()?.botToken) {
+      return snap.data().botToken;
+    }
+  } catch (err) {
+    console.error('Failed to read Telegram Bot Token from Firestore:', err);
+  }
+
+  throw new Error('Telegram Bot Token is not configured. Please set TELEGRAM_BOT_TOKEN in environment variables.');
+}
+
+export async function sendTelegramDocument(chatId: string, base64Data: string, fileName: string) {
+  const token = await getTelegramToken();
 
   try {
     const base64 = base64Data.split(',')[1] || base64Data;
@@ -44,8 +64,7 @@ export async function sendTelegramDocument(chatId: string, base64Data: string, f
  * Connects the Telegram Bot to our server using Webhooks.
  */
 export async function setupTelegramWebhook(baseUrl: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN || '8655161170:AAGGbO-jGx62oRs0a0SNEQ9YaYu9WrDazEQ';
-  if (!token) throw new Error('Bot token missing in environment variables.');
+  const token = await getTelegramToken();
 
   // Clean the baseUrl (remove trailing slash)
   const cleanBaseUrl = baseUrl.replace(/\/$/, '');
