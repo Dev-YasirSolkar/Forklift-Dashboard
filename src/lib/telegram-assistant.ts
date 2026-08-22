@@ -462,6 +462,7 @@ export function extractFirmFromQuery(queryStr: string, fallback: EnterpriseType)
  */
 export function findMatchingCompanies(text: string, allCompanyNames: string[]): string[] {
   const lower = text.toLowerCase().trim();
+  const cleanQuery = lower.replace(/[^a-z0-9]/g, '');
   const matched: string[] = [];
 
   const stopWords = new Set([
@@ -474,14 +475,15 @@ export function findMatchingCompanies(text: string, allCompanyNames: string[]): 
     'last', 'previous', 'month', 'jan', 'feb', 'mar', 'apr', 'may', 'jun',
     'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'kaun', 'kitna', 'baki', 'due',
     'konse', 'kitne', 'saare', 'sab', 'invoices', 'account', 'pura', 'hisaab',
-    'sirf', 'dono', 'both', 'rv', 'vithal', 'total', 'amount', 'overall'
+    'sirf', 'dono', 'both', 'rv', 'vithal', 'total', 'amount', 'overall', 'dekh', 'rha', 'tha'
   ]);
 
   for (const fullName of allCompanyNames) {
-    const fullLower = fullName.toLowerCase();
+    const fullLower = fullName.toLowerCase().trim();
+    const cleanFull = fullLower.replace(/[^a-z0-9]/g, '');
     
-    // 1. Direct substring match
-    if (lower.includes(fullLower)) {
+    // 1. Direct substring or normalized match
+    if (lower.includes(fullLower) || (cleanFull.length >= 4 && cleanQuery.includes(cleanFull))) {
       matched.push(fullName);
       continue;
     }
@@ -493,7 +495,8 @@ export function findMatchingCompanies(text: string, allCompanyNames: string[]): 
 
     let hit = false;
     for (const token of brandTokens) {
-      if (hasWord(lower, token) || (token.length >= 4 && lower.includes(token))) {
+      const cleanToken = token.replace(/[^a-z0-9]/g, '');
+      if (hasWord(lower, token) || (cleanToken.length >= 4 && cleanQuery.includes(cleanToken))) {
         matched.push(fullName);
         hit = true;
         break;
@@ -730,6 +733,11 @@ export async function getGeminiApiKey(): Promise<string | null> {
     }
   } catch (err) {
     console.error('Error reading Gemini API key from Firestore:', err);
+  }
+
+  // Fallback to project Firebase API key
+  if (firebaseConfig?.apiKey) {
+    return firebaseConfig.apiKey;
   }
 
   return null;
@@ -2327,29 +2335,35 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     );
 
     const isAskingCount = (
-      lower.includes('kitne bill') || lower.includes('kitne bills') || lower.includes('kitna bill baki') ||
+      lower.includes('kitne bill') || lower.includes('kitne bills') || lower.includes('kitna bill') ||
       lower.includes('kitne invoice') || lower.includes('kitne pending') || lower.includes('how many') ||
-      lower.includes('count of pending')
+      lower.includes('count of pending') || lower.includes('number of bills')
     );
 
     const isAskingPendingList = (
       lower.includes('konse pending') || lower.includes('konse bill') || lower.includes('kaun se pending') ||
       lower.includes('kaun se bill') || lower.includes('pending bills dikhao') || lower.includes('pending bills list') ||
-      lower.includes('unpaid bills') || lower.includes('pending invoices') || lower.includes('unpaid invoices')
+      lower.includes('unpaid bills') || lower.includes('pending invoices') || lower.includes('unpaid invoices') ||
+      lower.includes('kaun kaun se') || lower.includes('konse konse')
     );
 
     const isAskingPendingBalance = (
-      hasWord(lower, 'pending') || hasWord(lower, 'due') || hasWord(lower, 'balance') ||
-      hasWord(lower, 'baki') || hasWord(lower, 'unpaid') || lower.includes('kitna paisa') ||
-      lower.includes('paisa baki') || lower.includes('kitna lena') || lower.includes('balance kitna')
+      lower.includes('kitna baki') || lower.includes('kitna pending') || lower.includes('kitna balance') ||
+      lower.includes('kitna due') || lower.includes('kitna paisa') || lower.includes('paisa baki') ||
+      lower.includes('kitna lena') || lower.includes('balance kitna')
     );
 
     const isAskingBillsHistory = (
-      hasWord(lower, 'bills') || hasWord(lower, 'invoices') || (hasWord(lower, 'bill') && !isAskingCount && !isAskingPendingList && !isAskingPendingBalance) ||
-      lower.includes('pura account') || lower.includes('billing history') || lower.includes('all bills') || lower.includes('saare bill')
+      lower.includes('saare bill') || lower.includes('all bills') || lower.includes('pura account') ||
+      lower.includes('billing history') || lower.includes('all invoices') || lower.includes('sab bill')
     );
 
-    let specificIntent: IntentType = 'pending_balance';
+    const isAskingForklifts = (
+      hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') || hasWord(lower, 'gadi') ||
+      hasWord(lower, 'gaadi') || lower.includes('site forklift') || lower.includes('site par')
+    );
+
+    let specificIntent: IntentType = 'company_summary';
     let detailLevel: 'summary' | 'detailed' | 'count' = 'summary';
 
     if (isAskingTable) {
@@ -2367,7 +2381,7 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
     } else if (isAskingPendingBalance) {
       specificIntent = 'pending_balance';
       detailLevel = 'summary';
-    } else if (hasWord(lower, 'forklift') || hasWord(lower, 'gadi')) {
+    } else if (isAskingForklifts) {
       specificIntent = 'onsite_forklifts';
       detailLevel = 'summary';
     }
@@ -2396,13 +2410,15 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
 
   // ─── CASE C: NO COMPANY IN PROMPT - CHECK GENERAL INTENTS FIRST ─────────
 
-  // Top Debtors
+  // Top Debtors / Highest Pending
   const limitMatch = lower.match(/top\s*(\d+)/i) || lower.match(/sirf\s*(\d+)/i);
   if (
     lower.includes('top pending') || lower.includes('pending list') || lower.includes('baki list') ||
     lower.includes('kiske kitne baki') || lower.includes('kiska balance') || lower.includes('sabse zyada balance') ||
-    lower.includes('sabse jyada baki') || lower.includes('debtors') || lower.includes('top due') ||
-    lower === 'pending' || lower === 'dues' || lower === 'balance' || limitMatch
+    lower.includes('sabse zyada baki') || lower.includes('sabse jyada baki') || lower.includes('sabse jyada pending') ||
+    lower.includes('kiska kiska paisa') || lower.includes('market me kitna') || lower.includes('kul kitna baki') ||
+    lower.includes('total debtors') || lower.includes('top due') || lower === 'pending' || lower === 'dues' ||
+    lower === 'balance' || limitMatch
   ) {
     const num = limitMatch ? parseInt(limitMatch[1], 10) : 10;
     return { intent: 'top_debtors', firm: queryFirm, limit: num, detailLevel: 'summary', confidence: 0.98, rawText: raw };
@@ -2412,22 +2428,24 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   if (
     hasWord(lower, 'workshop') || hasWord(lower, 'idle') || hasWord(lower, 'khade') ||
     hasWord(lower, 'khada') || hasWord(lower, 'godown') || hasWord(lower, 'garage') ||
-    hasWord(lower, 'khali') || lower.includes('workshop forklift') || lower.includes('workshop me')
+    hasWord(lower, 'khali') || lower.includes('workshop forklift') || lower.includes('workshop me') ||
+    lower.includes('idle forklift')
   ) {
     return { intent: 'workshop_forklifts', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
   if (
     hasWord(lower, 'onsite') || hasWord(lower, 'on-site') || hasWord(lower, 'deployed') ||
-    hasWord(lower, 'bahar') || lower.includes('on site') || lower.includes('client site') || lower.includes('site par')
+    hasWord(lower, 'bahar') || lower.includes('on site') || lower.includes('client site') ||
+    lower.includes('site par') || lower.includes('bahar chal') || lower.includes('kaam par')
   ) {
     return { intent: 'onsite_forklifts', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
   if (
-    hasWord(lower, 'fleet') || hasWord(lower, 'forklift') || hasWord(lower, 'forklifts') ||
-    hasWord(lower, 'gadi') || hasWord(lower, 'gaadi') || hasWord(lower, 'machines') ||
-    lower.includes('total unit') || lower.includes('total fleet') || lower.includes('total gadi')
+    hasWord(lower, 'fleet') || lower.includes('total forklift') || lower.includes('kul gadi') ||
+    lower.includes('kitni gadi hai') || lower.includes('total fleet') || lower.includes('total gadi') ||
+    lower.includes('saari gadi') || (hasWord(lower, 'gadi') && (hasWord(lower, 'kitni') || hasWord(lower, 'total')))
   ) {
     return { intent: 'fleet_summary', firm: queryFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
@@ -2435,21 +2453,28 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   // Attendance
   if (
     hasWord(lower, 'absent') || lower.includes('kaun nahi aaya') || lower.includes('kon nahi aaya') ||
-    lower.includes('absent staff') || lower.includes('chhutti')
+    lower.includes('kaun absent') || lower.includes('absent staff') || lower.includes('chhutti') ||
+    lower.includes('chutti') || lower.includes('nahi aaya') || lower.includes('absent list')
   ) {
     return { intent: 'absent_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
-  if (lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('present staff')) {
+  if (
+    lower.includes('kaun aya') || lower.includes('kon aya') || lower.includes('kaun present') ||
+    lower.includes('present staff') || lower.includes('present list') || lower.includes('kitne log aaye')
+  ) {
     return { intent: 'present_staff', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
-  if (hasWord(lower, 'attendance') || hasWord(lower, 'haziri') || lower.includes('today attendance') || lower.includes('staff report')) {
+  if (
+    hasWord(lower, 'attendance') || hasWord(lower, 'haziri') || lower.includes('today attendance') ||
+    lower.includes('staff report') || lower.includes('aaj ki attendance')
+  ) {
     return { intent: 'attendance_today', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
   // All Companies List
-  if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company') {
+  if (lower.includes('all companies') || lower.includes('company list') || lower.includes('companies list') || lower === 'companies' || lower === 'company' || lower.includes('sab company')) {
     return { intent: 'all_companies', firm: userActiveFirm, detailLevel: 'summary', confidence: 0.98, rawText: raw };
   }
 
@@ -2477,7 +2502,7 @@ export async function resolveUserIntent(userPrompt: string, chatId: string): Pro
   const isMonthlyBillingRequest = (
     hasWord(lower, 'billing') || hasWord(lower, 'revenue') || hasWord(lower, 'turnover') ||
     hasWord(lower, 'collection') || hasWord(lower, 'kamai') || lower.includes('total bill') ||
-    lower.includes('sales') || (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'hisab')))
+    lower.includes('sales') || (targetMonth !== null && (hasWord(lower, 'bills') || hasWord(lower, 'bill') || hasWord(lower, 'hisab') || hasWord(lower, 'invoices')))
   );
 
   if (isMonthlyPendingRequest) {
