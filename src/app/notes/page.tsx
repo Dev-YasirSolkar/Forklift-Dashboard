@@ -204,24 +204,24 @@ export default function NotesPage() {
   
   return (
     <AppLayout>
-      <div className="flex flex-col gap-4 sm:gap-6 animate-in fade-in duration-500">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
+      <div className="flex flex-col gap-4 sm:gap-6 animate-in fade-in duration-500 w-full max-w-full overflow-x-hidden min-w-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full">
+            <div className="space-y-1 min-w-0">
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                    <StickyNote className="h-7 w-7 sm:h-8 sm:w-8 text-primary" />
-                    Quick Notes
+                    <StickyNote className="h-7 w-7 sm:h-8 sm:w-8 text-primary shrink-0" />
+                    <span className="truncate">Quick Notes</span>
                 </h1>
                 <p className="text-xs sm:text-sm text-muted-foreground">Keep your thoughts and workshop reminders in one place.</p>
             </div>
-            <Button onClick={() => openFormDialog(null)} className="shadow-lg shadow-primary/20 h-10 px-4 group">
+            <Button onClick={() => openFormDialog(null)} className="shadow-lg shadow-primary/20 h-10 px-4 group shrink-0 self-start sm:self-auto">
                 <PlusCircle className="mr-2 h-4 w-4 transition-transform group-hover:rotate-90" />
                 Add Note
             </Button>
         </div>
 
-        <Card className="border-none shadow-sm bg-card/50 backdrop-blur-sm">
+        <Card className="border-none shadow-sm bg-card/50 backdrop-blur-sm w-full max-w-full overflow-hidden">
           <CardHeader className="p-4 border-b border-border/50">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full">
                 <div className="relative group max-w-md w-full">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
@@ -250,13 +250,13 @@ export default function NotesPage() {
         </Card>
 
         {isLoading ? (
-          <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="break-inside-avoid h-48 rounded-xl bg-muted animate-pulse border border-border/50"></div>
+              <div key={i} className="h-48 rounded-xl bg-muted animate-pulse border border-border/50 w-full"></div>
             ))}
           </div>
         ) : filteredNotes.length > 0 ? (
-          <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4">
+          <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4 w-full">
             {filteredNotes.map((note, index) => {
               const isPresetColor = (c: string): c is PresetColor => Object.keys(noteColorClasses).includes(c);
               
@@ -287,23 +287,23 @@ export default function NotesPage() {
               }
 
               return (
-                <div key={note.id} className="break-inside-avoid">
+                <div key={note.id} className="break-inside-avoid w-full min-w-0 mb-4">
                   <Card 
                     className={cn(
-                      "group relative flex flex-col transition-all duration-300 hover:shadow-md hover:-translate-y-1 rounded-xl overflow-hidden", 
+                      "group relative flex flex-col transition-all duration-300 hover:shadow-md hover:-translate-y-1 rounded-xl overflow-hidden w-full max-w-full min-w-0 break-words", 
                       cardDynamicClass
                     )} 
                     style={cardDynamicStyle}
                   >
-                    <CardHeader className="flex flex-row items-start justify-between pb-1 pt-3 px-4">
-                      <div className="flex-1 pr-6">
-                          <span className={cn("text-[10px] font-black uppercase tracking-widest opacity-50", textDynamicClass)} style={textDynamicStyle}>
+                    <CardHeader className="flex flex-row items-start justify-between pb-1 pt-3 px-4 min-w-0">
+                      <div className="flex-1 pr-4 min-w-0 overflow-hidden">
+                          <span className={cn("text-[10px] font-black uppercase tracking-widest opacity-50 block truncate", textDynamicClass)} style={textDynamicStyle}>
                               Note #{index + 1}
                           </span>
                       </div>
                        <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className={cn("h-7 w-7 -mt-1 -mr-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5", textDynamicClass)} style={textDynamicStyle}>
+                              <Button variant="ghost" size="icon" className={cn("h-7 w-7 -mt-1 -mr-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5 shrink-0", textDynamicClass)} style={textDynamicStyle}>
                                   <EllipsisVertical className="h-3.5 w-3.5" />
                               </Button>
                           </DropdownMenuTrigger>
@@ -317,21 +317,21 @@ export default function NotesPage() {
                           </DropdownMenuContent>
                       </DropdownMenu>
                     </CardHeader>
-                    <CardContent className="py-1 px-4">
+                    <CardContent className="py-1 px-4 min-w-0 overflow-hidden">
                       {note.title && (
-                        <h4 className={cn("text-sm font-bold mb-1 leading-tight", textDynamicClass)} style={textDynamicStyle}>
+                        <h4 className={cn("text-sm font-bold mb-1 leading-tight break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
                           {note.title}
                         </h4>
                       )}
-                      <p className={cn("whitespace-pre-wrap text-xs sm:text-sm leading-snug", textDynamicClass)} style={textDynamicStyle}>
+                      <p className={cn("whitespace-pre-wrap text-xs sm:text-sm leading-snug break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
                           {note.content}
                       </p>
                     </CardContent>
-                    <CardFooter className="pt-1 pb-3 px-4 flex items-center justify-between mt-auto">
-                      <span className="text-[9px] font-bold uppercase tracking-tight" style={footerDynamicStyle}>
+                    <CardFooter className="pt-1 pb-3 px-4 flex items-center justify-between mt-auto min-w-0">
+                      <span className="text-[9px] font-bold uppercase tracking-tight truncate pr-2" style={footerDynamicStyle}>
                           {format(new Date(note.createdAt), "dd MMM yyyy")}
                       </span>
-                      <Pin className="h-2.5 w-2.5 opacity-20 group-hover:opacity-100 transition-opacity" style={textDynamicStyle}/>
+                      <Pin className="h-2.5 w-2.5 opacity-20 group-hover:opacity-100 transition-opacity shrink-0" style={textDynamicStyle}/>
                     </CardFooter>
                   </Card>
                 </div>
