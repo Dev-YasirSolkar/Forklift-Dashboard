@@ -1,4 +1,4 @@
-# VE Dashboard - Workshop Management System
+# Forklift Dashboard - Workshop Management System
 
 A professional management dashboard for forklift workshops, built with Next.js and Firebase. This application manages fleet tracking, job cards, billing, payments, and employee assignments for Vithal and R.V Enterprises.
 

@@ -2701,7 +2701,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
     // Help
     if (structured.intent === 'help') {
       return {
-        text: `🤖 *VE Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n      • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n      • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n      • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n      • *Top Debtors Ranking:* _"Top pending"_\n      • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n      • *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n─────────────────────\n\n👇 *Select Active Firm below:*`,
+        text: `🤖 *Forklift Business Assistant Guide*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap WhatsApp ki tarah natural Hindi/Hinglish me pooch sakte hain:\n\n      • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n      • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n      • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n      • *Top Debtors Ranking:* _"Top pending"_\n      • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n      • *Staff Haziri:* _"Today attendance"_, _"Aaj kaun nahi aaya"_\n─────────────────────\n\n👇 *Select Active Firm below:*`,
         buttons: renderFirmRadioButtons(activeFirm),
       };
     }
@@ -2788,7 +2788,7 @@ export async function processAdminNaturalLanguageQuery(userPrompt: string, chatI
   // Fallback Guide
   const activeFirm = await getUserActiveFirm(chatId);
   return {
-    text: `🤖 *VE Dashboard AI Assistant*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap bilkul specific sawaal pooch sakte hain:\n\n      • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n      • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n      • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n      • *Top Debtors Ranking:* _"Top pending"_\n      • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n      • *Attendance:* _"Today attendance"_\n─────────────────────\n\n👇 *Select Active Firm below:*`,
+    text: `🤖 *Forklift Dashboard AI Assistant*\n🏢 Scope: *${activeFirm === 'Both' ? 'Both Firms (Vithal + RV)' : activeFirm}*\n━━━━━━━━━━━━━━━━━━━━━\n\nAap bilkul specific sawaal pooch sakte hain:\n\n      • *Kitne Bills Pending:* _"Bisleri ke kitne bills pending hai"_\n      • *Konse Bills Pending:* _"Bisleri ke konse pending hai"_\n      • *Month & Firm Pending:* _"is month ke saare pending bills Vithal ke"_\n      • *Top Debtors Ranking:* _"Top pending"_\n      • *Forklift Fleet:* _"Workshop"_, _"On-site"_\n      • *Attendance:* _"Today attendance"_\n─────────────────────\n\n👇 *Select Active Firm below:*`,
     buttons: renderFirmRadioButtons(activeFirm),
   };
 }

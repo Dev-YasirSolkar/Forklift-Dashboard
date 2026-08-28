@@ -84,7 +84,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <div className="flex h-14 items-center justify-between px-3">
             <Link href="/" className="flex items-center gap-2 font-semibold overflow-hidden">
               <ForkliftIcon className="h-6 w-6 shrink-0 text-primary" />
-              <span className="truncate group-data-[collapsible=icon]:hidden">VE Dashboard</span>
+              <span className="truncate group-data-[collapsible=icon]:hidden">Forklift Dashboard</span>
             </Link>
             <SidebarTrigger className="hidden shrink-0 md:flex" />
           </div>

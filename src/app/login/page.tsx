@@ -57,7 +57,7 @@ export default function LoginPage() {
           <div className="flex items-center justify-center mb-4">
             <ForkliftIcon className="h-10 w-10 text-primary" />
           </div>
-          <CardTitle className="text-2xl text-center">Login to VE Dashboard</CardTitle>
+          <CardTitle className="text-2xl text-center">Login to Forklift Dashboard</CardTitle>
           <CardDescription className="text-center">
             Enter your email below to login to your account
           </CardDescription>
