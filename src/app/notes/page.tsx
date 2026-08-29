@@ -130,6 +130,7 @@ export default function NotesPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [viewNote, setViewNote] = useState<Note | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   const notesQuery = useMemoFirebase(() => {
@@ -153,6 +154,7 @@ export default function NotesPage() {
       setIsFormOpen(false);
       setNoteToDelete(null);
       setSelectedNote(null);
+      setViewNote(null);
   }, []);
 
   const handleDelayedAction = (action: () => void) => {
@@ -252,11 +254,11 @@ export default function NotesPage() {
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-48 rounded-xl bg-muted animate-pulse border border-border/50 w-full"></div>
+              <div key={i} className="aspect-square rounded-2xl bg-muted animate-pulse border border-border/50 w-full"></div>
             ))}
           </div>
         ) : filteredNotes.length > 0 ? (
-          <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4 w-full">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:columns-4 xl:grid-cols-4 gap-4 w-full">
             {filteredNotes.map((note, index) => {
               const isPresetColor = (c: string): c is PresetColor => Object.keys(noteColorClasses).includes(c);
               
@@ -287,51 +289,57 @@ export default function NotesPage() {
               }
 
               return (
-                <div key={note.id} className="break-inside-avoid w-full min-w-0 mb-4">
+                <div key={note.id} className="w-full min-w-0">
                   <Card 
                     className={cn(
-                      "group relative flex flex-col transition-all duration-300 hover:shadow-md hover:-translate-y-1 rounded-xl overflow-hidden w-full max-w-full min-w-0 break-words", 
+                      "group relative flex flex-col justify-between transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-2xl overflow-hidden w-full aspect-square cursor-pointer border select-none", 
                       cardDynamicClass
                     )} 
                     style={cardDynamicStyle}
+                    onClick={() => setViewNote(note)}
                   >
-                    <CardHeader className="flex flex-row items-start justify-between pb-1 pt-3 px-4 min-w-0">
-                      <div className="flex-1 pr-4 min-w-0 overflow-hidden">
-                          <span className={cn("text-[10px] font-black uppercase tracking-widest opacity-50 block truncate", textDynamicClass)} style={textDynamicStyle}>
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4 min-w-0 shrink-0">
+                      <div className="flex-1 pr-2 min-w-0 overflow-hidden">
+                          <span className={cn("text-[10px] font-black uppercase tracking-widest opacity-60 block truncate", textDynamicClass)} style={textDynamicStyle}>
                               Note #{index + 1}
                           </span>
                       </div>
                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className={cn("h-7 w-7 -mt-1 -mr-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5 shrink-0", textDynamicClass)} style={textDynamicStyle}>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="icon" className={cn("h-7 w-7 rounded-full hover:bg-black/10 dark:hover:bg-white/10 shrink-0", textDynamicClass)} style={textDynamicStyle}>
                                   <EllipsisVertical className="h-3.5 w-3.5" />
                               </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-36">
-                              <DropdownMenuItem onSelect={() => openFormDialog(note)} className="cursor-pointer">
+                              <DropdownMenuItem onSelect={(e) => { e.stopPropagation(); openFormDialog(note); }} className="cursor-pointer">
                                   <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
                               </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => openDeleteDialog(note)} className="text-destructive focus:bg-destructive/10 cursor-pointer">
+                              <DropdownMenuItem onSelect={(e) => { e.stopPropagation(); openDeleteDialog(note); }} className="text-destructive focus:bg-destructive/10 cursor-pointer">
                                   <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
                               </DropdownMenuItem>
                           </DropdownMenuContent>
                       </DropdownMenu>
                     </CardHeader>
-                    <CardContent className="py-1 px-4 min-w-0 overflow-hidden">
+
+                    <CardContent 
+                      className="py-1 px-4 min-w-0 flex-1 overflow-y-auto space-y-1 cursor-pointer pr-2 scrollbar-thin"
+                      onClick={() => setViewNote(note)}
+                    >
                       {note.title && (
-                        <h4 className={cn("text-sm font-bold mb-1 leading-tight break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
+                        <h4 className={cn("text-sm font-bold leading-tight break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
                           {note.title}
                         </h4>
                       )}
-                      <p className={cn("whitespace-pre-wrap text-xs sm:text-sm leading-snug break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
+                      <p className={cn("whitespace-pre-wrap text-xs leading-snug break-words [overflow-wrap:anywhere]", textDynamicClass)} style={textDynamicStyle}>
                           {note.content}
                       </p>
                     </CardContent>
-                    <CardFooter className="pt-1 pb-3 px-4 flex items-center justify-between mt-auto min-w-0">
-                      <span className="text-[9px] font-bold uppercase tracking-tight truncate pr-2" style={footerDynamicStyle}>
+
+                    <CardFooter className="pt-2 pb-3 px-4 flex items-center justify-between shrink-0 mt-auto border-t border-black/5 dark:border-white/5">
+                      <span className="text-[9px] font-bold uppercase tracking-tight truncate pr-2 opacity-70" style={footerDynamicStyle}>
                           {format(new Date(note.createdAt), "dd MMM yyyy")}
                       </span>
-                      <Pin className="h-2.5 w-2.5 opacity-20 group-hover:opacity-100 transition-opacity shrink-0" style={textDynamicStyle}/>
+                      <Pin className="h-3 w-3 opacity-30 group-hover:opacity-100 transition-opacity shrink-0" style={textDynamicStyle}/>
                     </CardFooter>
                   </Card>
                 </div>
@@ -357,6 +365,63 @@ export default function NotesPage() {
           </div>
         )}
       </div>
+
+       {/* Full Note Detail Dialog */}
+       <Dialog open={!!viewNote} onOpenChange={(open) => !open && setViewNote(null)}>
+        <DialogContent className="max-w-[95vw] sm:max-w-lg p-0 rounded-3xl overflow-hidden border-none shadow-2xl">
+          <DialogHeader className="p-6 pb-2 bg-muted/10 border-b">
+            <div className="flex items-center justify-between gap-2 pr-6">
+              <span className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1">
+                <StickyNote className="h-3.5 w-3.5" /> Note Detail
+              </span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                {viewNote && format(new Date(viewNote.createdAt), "dd MMM yyyy, hh:mm a")}
+              </span>
+            </div>
+            {viewNote?.title && (
+              <DialogTitle className="text-xl font-black text-foreground mt-2 break-words leading-tight">
+                {viewNote.title}
+              </DialogTitle>
+            )}
+          </DialogHeader>
+
+          <div className="p-6 max-h-[60vh] overflow-y-auto">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground break-words [overflow-wrap:anywhere]">
+              {viewNote?.content}
+            </p>
+          </div>
+
+          <DialogFooter className="p-4 bg-muted/20 border-t flex flex-row gap-2 justify-between items-center">
+            <Button 
+              variant="ghost" 
+              onClick={() => {
+                const note = viewNote;
+                setViewNote(null);
+                if (note) openDeleteDialog(note);
+              }}
+              className="text-destructive hover:bg-destructive/10 text-xs font-bold h-9 rounded-xl"
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
+            </Button>
+
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setViewNote(null)} className="text-xs font-bold rounded-xl h-9">
+                Close
+              </Button>
+              <Button 
+                onClick={() => {
+                  const note = viewNote;
+                  setViewNote(null);
+                  if (note) openFormDialog(note);
+                }}
+                className="text-xs font-bold rounded-xl h-9 bg-primary shadow-sm"
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit Note
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
        <Dialog open={isFormOpen} onOpenChange={(open) => !open && closeAllDialogs()}>
         <DialogContent className="max-w-[95vw] sm:max-w-lg p-0 rounded-2xl overflow-hidden border-none shadow-2xl">
