@@ -632,21 +632,17 @@ export default function PaymentsPage() {
                                 {(['Received', 'Partial', 'Pending'] as PaymentStatus[]).map(s => (
                                     <div 
                                         key={s} 
-                                        className="flex items-center gap-2 px-2 py-1.5 hover:bg-accent rounded-md cursor-pointer transition-colors"
+                                        className="flex items-center gap-2 px-2 py-1.5 hover:bg-accent rounded-md cursor-pointer transition-colors select-none"
                                         onClick={() => toggleStatusFilter(s)}
                                     >
                                         <Checkbox 
                                             id={`status-${s}`} 
                                             checked={statusFilters.includes(s)}
-                                            onCheckedChange={() => toggleStatusFilter(s)}
+                                            className="pointer-events-none"
                                         />
-                                        <label 
-                                            htmlFor={`status-${s}`} 
-                                            className="text-xs font-medium cursor-pointer flex-1 leading-none"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
+                                        <span className="text-xs font-medium cursor-pointer flex-1 leading-none">
                                             {s}
-                                        </label>
+                                        </span>
                                     </div>
                                 ))}
                                 {statusFilters.length > 0 && (
