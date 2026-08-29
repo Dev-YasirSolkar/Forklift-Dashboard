@@ -849,52 +849,91 @@ export default function PaymentsPage() {
                 <div className="flex-1 overflow-y-auto">
                     <div className="p-4 sm:p-6 space-y-8">
                         {/* Section: Table Columns Selection & Names */}
-                        <div className="space-y-4">
-                            <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                                <CheckSquare2 className="h-3 w-3" /> Table Columns & Alignment
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {Object.keys(columnConfigs).map((id) => (
-                                    <div key={id} className="bg-muted/20 p-3 rounded-xl border border-dashed space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex flex-col">
-                                                <span className="text-[10px] font-black uppercase text-foreground/80">{columnConfigs[id].title}</span>
-                                                <div className="flex items-center space-x-2 mt-1">
-                                                    <Checkbox 
-                                                        id={`col-${id}`} 
-                                                        checked={columnConfigs[id].visible} 
-                                                        onCheckedChange={(checked) => updateColumnConfig(id, { visible: !!checked })} 
-                                                    />
-                                                    <Label htmlFor={`col-${id}`} className="text-[10px] font-bold text-muted-foreground uppercase cursor-pointer">Include in Table</Label>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center bg-background rounded-lg border p-0.5">
-                                                {(['left', 'center', 'right'] as const).map(align => (
-                                                    <Button 
-                                                        key={align} 
-                                                        variant={columnConfigs[id].align === align ? 'default' : 'ghost'} 
-                                                        size="icon" 
-                                                        className="h-6 w-6 rounded-md"
-                                                        onClick={() => updateColumnConfig(id, { align })}
+                        <div className="space-y-3 bg-muted/10 border rounded-2xl p-4 sm:p-5 shadow-sm">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div>
+                                    <h3 className="text-xs font-black uppercase text-primary tracking-wider flex items-center gap-1.5">
+                                        <CheckSquare2 className="h-4 w-4 text-primary" /> Table Columns & Alignment
+                                    </h3>
+                                    <p className="text-[11px] text-muted-foreground mt-0.5">Select columns to include in your PDF statement and customize header labels.</p>
+                                </div>
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    onClick={() => setColumnConfigs(defaultColumnConfigs)} 
+                                    className="h-8 text-[11px] font-bold rounded-xl border-dashed shrink-0 self-start sm:self-auto"
+                                >
+                                    Reset Defaults
+                                </Button>
+                            </div>
+
+                            <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                                <div className="overflow-x-auto">
+                                    <Table>
+                                        <TableHeader className="bg-muted/30">
+                                            <TableRow className="h-8">
+                                                <TableHead className="w-12 text-center text-[10px] font-black uppercase">Show</TableHead>
+                                                <TableHead className="text-[10px] font-black uppercase">Column Field</TableHead>
+                                                <TableHead className="text-[10px] font-black uppercase">PDF Header Name</TableHead>
+                                                <TableHead className="w-28 text-center text-[10px] font-black uppercase">Align</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {Object.keys(columnConfigs).map((id) => {
+                                                const config = columnConfigs[id];
+                                                return (
+                                                    <TableRow 
+                                                        key={id} 
+                                                        className={cn(
+                                                            "h-10 transition-colors", 
+                                                            config.visible ? "bg-card" : "bg-muted/10 opacity-60"
+                                                        )}
                                                     >
-                                                        {align === 'left' && <AlignLeft className="h-3 w-3" />}
-                                                        {align === 'center' && <AlignCenter className="h-3 w-3" />}
-                                                        {align === 'right' && <AlignRight className="h-3 w-3" />}
-                                                    </Button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-[9px] font-bold uppercase text-muted-foreground">PDF Header Label</Label>
-                                            <Input 
-                                                value={columnConfigs[id].label}
-                                                onChange={(e) => updateColumnConfig(id, { label: e.target.value })}
-                                                className="h-8 text-xs font-bold"
-                                                placeholder="Header Name"
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
+                                                        <TableCell className="text-center p-2">
+                                                            <Checkbox 
+                                                                id={`col-${id}`} 
+                                                                checked={config.visible} 
+                                                                onCheckedChange={(checked) => updateColumnConfig(id, { visible: !!checked })} 
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell className="p-2 min-w-[140px]">
+                                                            <label htmlFor={`col-${id}`} className="text-xs font-bold cursor-pointer text-foreground block">
+                                                                {config.title}
+                                                            </label>
+                                                        </TableCell>
+                                                        <TableCell className="p-2 min-w-[150px]">
+                                                            <Input 
+                                                                value={config.label}
+                                                                onChange={(e) => updateColumnConfig(id, { label: e.target.value })}
+                                                                disabled={!config.visible}
+                                                                className="h-8 text-xs font-bold rounded-lg border-muted bg-background"
+                                                                placeholder="Header Name"
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell className="text-center p-2">
+                                                            <div className="flex items-center justify-center bg-background rounded-lg p-0.5 border shadow-2xs">
+                                                                {(['left', 'center', 'right'] as const).map(align => (
+                                                                    <Button 
+                                                                        key={align} 
+                                                                        variant={config.align === align ? 'default' : 'ghost'} 
+                                                                        size="icon" 
+                                                                        disabled={!config.visible}
+                                                                        className="h-6 w-6 rounded-md"
+                                                                        onClick={() => updateColumnConfig(id, { align })}
+                                                                    >
+                                                                        {align === 'left' && <AlignLeft className="h-3 w-3" />}
+                                                                        {align === 'center' && <AlignCenter className="h-3 w-3" />}
+                                                                        {align === 'right' && <AlignRight className="h-3 w-3" />}
+                                                                    </Button>
+                                                                ))}
+                                                            </div>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </div>
                             </div>
                         </div>
 
