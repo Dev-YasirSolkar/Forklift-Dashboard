@@ -170,19 +170,42 @@ export default function ChallansPage() {
 
         const groups: Record<string, Challan[]> = {};
         list.forEach(challan => {
-            const monthKey = format(parseISO(challan.date), 'MMMM yyyy');
+            const monthKey = challan.date ? format(parseISO(challan.date), 'yyyy-MM') : '0000-00';
             if (!groups[monthKey]) groups[monthKey] = [];
             groups[monthKey].push(challan);
         });
 
-        return Object.entries(groups)
-            .sort((a, b) => b[0].localeCompare(a[0])) 
-            .map(([month, items]) => ({
-                month,
-                items: items.sort((a, b) => 
-                    (a.challanNo || '').localeCompare(b.challanNo || '', undefined, { numeric: true, sensitivity: 'base' })
-                )
-            }));
+        const sortedMonthKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+
+        return sortedMonthKeys.map(monthKey => {
+            let monthDisplay = 'UNKNOWN';
+            if (monthKey !== '0000-00') {
+                try {
+                    monthDisplay = format(parseISO(`${monthKey}-01`), 'MMMM yyyy');
+                } catch (e) {
+                    monthDisplay = monthKey;
+                }
+            }
+
+            const items = groups[monthKey].sort((a, b) => {
+                const dateA = a.date || '';
+                const dateB = b.date || '';
+                if (dateA !== dateB) {
+                    return dateB.localeCompare(dateA);
+                }
+                const createdA = a.createdAt || '';
+                const createdB = b.createdAt || '';
+                if (createdA !== createdB) {
+                    return createdB.localeCompare(createdA);
+                }
+                return (b.challanNo || '').localeCompare(a.challanNo || '', undefined, { numeric: true, sensitivity: 'base' });
+            });
+
+            return {
+                month: monthDisplay,
+                items
+            };
+        });
     }, [savedChallans, historySearch, firmFilter, clientFilter]);
 
     const handleAddItem = () => {
