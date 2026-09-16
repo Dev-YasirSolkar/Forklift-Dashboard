@@ -170,7 +170,14 @@ export default function ChallansPage() {
 
         const groups: Record<string, Challan[]> = {};
         list.forEach(challan => {
-            const monthKey = challan.date ? format(parseISO(challan.date), 'yyyy-MM') : '0000-00';
+            let monthKey = '0000-00';
+            if (challan.date) {
+                try {
+                    monthKey = format(parseISO(challan.date), 'yyyy-MM');
+                } catch (e) {
+                    monthKey = '0000-00';
+                }
+            }
             if (!groups[monthKey]) groups[monthKey] = [];
             groups[monthKey].push(challan);
         });
@@ -178,7 +185,7 @@ export default function ChallansPage() {
         const sortedMonthKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
         return sortedMonthKeys.map(monthKey => {
-            let monthDisplay = 'UNKNOWN';
+            let monthDisplay = 'NO DATE / UNASSIGNED';
             if (monthKey !== '0000-00') {
                 try {
                     monthDisplay = format(parseISO(`${monthKey}-01`), 'MMMM yyyy');
@@ -551,7 +558,9 @@ export default function ChallansPage() {
                             </div>
                         ) : groupedHistory.length > 0 ? (
                             groupedHistory.map(group => {
-                                const [monthName, year] = group.month.split(' ');
+                                const parts = group.month.split(' ');
+                                const monthName = parts[0] || 'NO DATE';
+                                const year = parts[1] || 'RECORDS';
                                 return (
                                 <div key={group.month} className="space-y-6">
                                     <div className="px-2">
@@ -577,7 +586,7 @@ export default function ChallansPage() {
                                                                 <Badge variant="outline" className="text-[7px] font-black py-0 h-3.5 border-muted-foreground/10 uppercase shrink-0">{challan.enterprise}</Badge>
                                                             </div>
                                                             <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                <span className="flex items-center gap-1 shrink-0"><Clock className="h-2.5 w-2.5" /> {format(parseISO(challan.date), 'dd MMM')}</span>
+                                                                <span className="flex items-center gap-1 shrink-0"><Clock className="h-2.5 w-2.5" /> {challan.date ? (() => { try { return format(parseISO(challan.date), 'dd MMM'); } catch (e) { return challan.date; } })() : 'NO DATE'}</span>
                                                                 <span className="opacity-20 shrink-0">|</span>
                                                                 <span className="flex items-center gap-1 text-primary whitespace-normal break-words leading-tight"><Building2 className="h-2.5 w-2.5 shrink-0" /> {challan.deliveryToName}</span>
                                                             </div>
@@ -895,7 +904,7 @@ export default function ChallansPage() {
                                         </Badge>
                                         <DialogTitle className="text-2xl font-black">{selectedChallanForView.challanNo}</DialogTitle>
                                         <DialogDescription className="text-xs uppercase font-bold flex items-center gap-1.5 mt-1">
-                                            <CalendarDays className="h-3 w-3" /> {format(parseISO(selectedChallanForView.date), 'dd MMMM yyyy')}
+                                            <CalendarDays className="h-3 w-3" /> {selectedChallanForView.date ? (() => { try { return format(parseISO(selectedChallanForView.date), 'dd MMMM yyyy'); } catch (e) { return selectedChallanForView.date; } })() : 'NO DATE'}
                                         </DialogDescription>
                                     </div>
                                     <Button variant="outline" size="sm" onClick={() => { setIsViewOpen(false); loadHistoryRecord(selectedChallanForView); }} className="rounded-xl font-bold">
