@@ -167,9 +167,18 @@ export const generateChallanPdf = async (data: ChallanData) => {
         doc.rect(x, infoY, width, 8);
     };
 
-    drawInfoCell("CHALLAN NO:", data.challanNo.toUpperCase(), margin, colW);
-    drawInfoCell("VEHICLE NO:", data.vehicleNo.toUpperCase(), margin + colW, colW);
-    drawInfoCell("DATE:", format(parseISO(data.date), 'dd-MMM-yyyy').toUpperCase(), margin + (colW * 2), colW);
+    let formattedDate = "";
+    if (data.date) {
+        try {
+            formattedDate = format(parseISO(data.date), 'dd-MMM-yyyy').toUpperCase();
+        } catch (e) {
+            formattedDate = (data.date || '').toUpperCase();
+        }
+    }
+
+    drawInfoCell("CHALLAN NO:", (data.challanNo || '').toUpperCase(), margin, colW);
+    drawInfoCell("VEHICLE NO:", (data.vehicleNo || '').toUpperCase(), margin + colW, colW);
+    drawInfoCell("DATE:", formattedDate, margin + (colW * 2), colW);
 
     currentY += 8;
 

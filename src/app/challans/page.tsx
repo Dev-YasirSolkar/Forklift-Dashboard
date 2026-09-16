@@ -280,8 +280,8 @@ export default function ChallansPage() {
     };
 
     const handleSaveRecord = async () => {
-        if (!challanNo || !date) {
-            toast({ variant: 'destructive', title: 'Error', description: 'Challan No. and Date are required to save.' });
+        if (!challanNo) {
+            toast({ variant: 'destructive', title: 'Error', description: 'Challan No. is required to save.' });
             return;
         }
 
@@ -342,7 +342,7 @@ export default function ChallansPage() {
         setEnterprise(record.enterprise as 'Vithal' | 'RV');
         setChallanNo(record.challanNo);
         setVehicleNo(record.vehicleNo || '');
-        setDate(record.date);
+        setDate(record.date || '');
         
         setFromId('manual');
         setManualFromName(record.fromName);
@@ -387,8 +387,8 @@ export default function ChallansPage() {
     }
 
     const handleGenerate = async () => {
-        if (!challanNo || !date) {
-            toast({ variant: 'destructive', title: 'Error', description: 'Challan No. and Date are required.' });
+        if (!challanNo) {
+            toast({ variant: 'destructive', title: 'Error', description: 'Challan No. is required.' });
             return;
         }
 
@@ -660,12 +660,22 @@ export default function ChallansPage() {
                                         <Input value={challanNo} onChange={e => setChallanNo(e.target.value)} placeholder="001/24-25" className="h-11 font-bold rounded-xl" />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Car className="h-3 w-3" /> Vehicle No.</Label>
-                                        <Input value={vehicleNo} onChange={e => setVehicleNo(e.target.value)} placeholder="MH-04-XX-1234" className="h-11 font-bold rounded-xl" />
+                                         <div className="flex justify-between items-center">
+                                             <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Car className="h-3 w-3" /> Vehicle No. (Optional)</Label>
+                                             {vehicleNo && (
+                                                 <button type="button" onClick={() => setVehicleNo('')} className="text-[9px] text-muted-foreground hover:text-foreground font-bold uppercase underline">Clear</button>
+                                             )}
+                                         </div>
+                                         <Input value={vehicleNo} onChange={e => setVehicleNo(e.target.value)} placeholder="Leave blank or enter Vehicle No." className="h-11 font-bold rounded-xl" />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><CalendarDays className="h-3 w-3" /> Date</Label>
-                                        <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-11 font-bold rounded-xl" />
+                                         <div className="flex justify-between items-center">
+                                             <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><CalendarDays className="h-3 w-3" /> Date (Optional)</Label>
+                                             {date && (
+                                                 <button type="button" onClick={() => setDate('')} className="text-[9px] text-muted-foreground hover:text-foreground font-bold uppercase underline">Clear</button>
+                                             )}
+                                         </div>
+                                         <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-11 font-bold rounded-xl" />
                                     </div>
                                 </div>
 
