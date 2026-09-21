@@ -63,7 +63,7 @@ export type Forklift = {
   firm?: 'Vithal' | 'RV';
   voltage?: string;
   mastHeight?: string;
-  locationType: 'Workshop' | 'On-Site' | 'Not Confirm';
+  locationType: 'Workshop' | 'On-Site' | 'Not Confirm' | 'Sold';
   locationAssignmentDate?: string; // ISO DateTime
   siteCompany?: string;
   siteArea?: string;
@@ -71,6 +71,11 @@ export type Forklift = {
   siteContactNumber?: string;
   remarks?: string;
   poPiNumber?: string;
+  // Sale Tracking Fields
+  soldToCustomer?: string;
+  soldDate?: string;
+  salePrice?: number;
+  soldRemarks?: string;
 };
 
 export type ServiceRequest = {

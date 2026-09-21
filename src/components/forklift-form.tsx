@@ -27,7 +27,7 @@ export type ForkliftFormData = {
   firm: 'Vithal' | 'RV' | '';
   voltage: string;
   mastHeight: string;
-  locationType: 'Workshop' | 'On-Site' | 'Not Confirm';
+  locationType: 'Workshop' | 'On-Site' | 'Not Confirm' | 'Sold';
   locationAssignmentDate: string;
   siteCompany: string;
   siteArea: string;
@@ -35,6 +35,11 @@ export type ForkliftFormData = {
   siteContactNumber: string;
   remarks: string;
   poPiNumber: string;
+  // Sale Tracking Fields
+  soldToCustomer: string;
+  soldDate: string;
+  salePrice: string;
+  soldRemarks: string;
 };
 
 interface ForkliftFormProps {
@@ -66,6 +71,10 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
     siteContactNumber: '',
     remarks: '',
     poPiNumber: '',
+    soldToCustomer: '',
+    soldDate: '',
+    salePrice: '',
+    soldRemarks: '',
   });
 
   useEffect(() => {
@@ -88,6 +97,10 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
         siteContactNumber: initialData.siteContactNumber ?? '',
         remarks: initialData.remarks ?? '',
         poPiNumber: initialData.poPiNumber ?? '',
+        soldToCustomer: initialData.soldToCustomer ?? '',
+        soldDate: initialData.soldDate ?? '',
+        salePrice: initialData.salePrice?.toString() ?? '',
+        soldRemarks: initialData.soldRemarks ?? '',
       });
     } else if (mode === 'add') {
         setFormData({
@@ -108,6 +121,10 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
             siteContactNumber: '',
             remarks: '',
             poPiNumber: '',
+            soldToCustomer: '',
+            soldDate: '',
+            salePrice: '',
+            soldRemarks: '',
         });
     }
   }, [initialData, mode]);
@@ -148,6 +165,15 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
       });
       return;
     }
+
+    if (formData.locationType === 'Sold' && !formData.soldToCustomer) {
+      toast({
+        variant: "destructive",
+        title: "Missing Information",
+        description: "Please specify who the equipment was sold to.",
+      });
+      return;
+    }
     
     const dataToSubmit: Partial<ForkliftFormData> = {
       ...formData,
@@ -159,6 +185,10 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
       dataToSubmit.siteArea = '';
       dataToSubmit.siteContactPerson = '';
       dataToSubmit.siteContactNumber = '';
+      dataToSubmit.soldToCustomer = '';
+      dataToSubmit.soldDate = '';
+      dataToSubmit.salePrice = '';
+      dataToSubmit.soldRemarks = '';
     }
 
     onSubmit(dataToSubmit);
@@ -245,7 +275,7 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
                 <RadioGroup
                     value={formData.locationType}
                     onValueChange={handleLocationChange}
-                    className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-1"
+                    className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-1"
                 >
                     <div className="flex items-center space-x-2 p-3 rounded-lg border border-orange-200 dark:border-orange-900/50 bg-transparent">
                         <RadioGroupItem value="Workshop" id="Workshop" />
@@ -258,6 +288,10 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
                     <div className="flex items-center space-x-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-transparent">
                         <RadioGroupItem value="Not Confirm" id="Not Confirm" />
                         <Label htmlFor="Not Confirm" className="cursor-pointer font-medium text-red-800 dark:text-red-400">Not Confirmed</Label>
+                    </div>
+                    <div className="flex items-center space-x-2 p-3 rounded-lg border border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20">
+                        <RadioGroupItem value="Sold" id="Sold" />
+                        <Label htmlFor="Sold" className="cursor-pointer font-bold text-purple-900 dark:text-purple-300">Sold / Sale</Label>
                     </div>
                 </RadioGroup>
            </div>
@@ -278,6 +312,57 @@ export function ForkliftForm({ onSubmit, onCancel, initialData, mode, companies,
                 />
                 <p className="text-[10px] text-muted-foreground">Changes automatically when location type changes, or set manually.</p>
             </div>
+
+          {formData.locationType === 'Sold' && (
+            <div className="grid gap-4 mt-2 border-l-2 border-purple-500 pl-4 bg-purple-50/20 p-4 rounded-r-xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                   <div className="grid gap-2">
+                    <Label htmlFor="soldToCustomer" className="font-bold text-purple-900 dark:text-purple-300">Sold To (Buyer / Customer Name) *</Label>
+                    <Input
+                        id="soldToCustomer"
+                        placeholder="e.g. ABC Logistics Pvt Ltd / Rajesh Kumar"
+                        value={formData.soldToCustomer}
+                        onChange={handleInputChange}
+                        className="font-bold border-purple-200"
+                        required
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="soldDate" className="font-bold text-purple-900 dark:text-purple-300">Sale Date</Label>
+                    <Input 
+                        id="soldDate" 
+                        type="date" 
+                        value={formData.soldDate} 
+                        onChange={handleInputChange} 
+                        className="font-bold border-purple-200"
+                    />
+                  </div>
+                </div>
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="salePrice" className="font-bold text-purple-900 dark:text-purple-300">Sale Price / Amount (₹)</Label>
+                    <Input 
+                        id="salePrice" 
+                        type="number" 
+                        placeholder="e.g. 450000" 
+                        value={formData.salePrice} 
+                        onChange={handleInputChange} 
+                        className="font-mono font-bold border-purple-200"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="soldRemarks" className="font-bold text-purple-900 dark:text-purple-300">Sale Invoice / Notes</Label>
+                    <Input 
+                        id="soldRemarks" 
+                        placeholder="e.g. Inv #SALE-2026/04, Paid via Bank Transfer" 
+                        value={formData.soldRemarks} 
+                        onChange={handleInputChange} 
+                        className="border-purple-200"
+                    />
+                  </div>
+                </div>
+            </div>
+          )}
 
           {formData.locationType === 'On-Site' && (
             <div className="grid gap-4 mt-2 border-l-2 border-primary pl-4">

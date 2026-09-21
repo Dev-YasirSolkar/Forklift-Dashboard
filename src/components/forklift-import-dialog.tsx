@@ -35,6 +35,10 @@ const columnMapping: Record<string, keyof Forklift> = {
   'AREA': 'siteArea',
   'Company Contact Person': 'siteContactPerson',
   'Mobile': 'siteContactNumber',
+  'Sold To': 'soldToCustomer',
+  'Sold Date': 'soldDate',
+  'Sale Price': 'salePrice',
+  'Sale Remarks': 'soldRemarks',
 };
 
 const userVisibleHeaders = Object.keys(columnMapping);
@@ -120,10 +124,12 @@ export function ForkliftImportDialog({ isOpen, onClose, onImportComplete }: Fork
              newForklift.year = new Date().getFullYear();
           }
 
-          if (newForklift.siteCompany) {
+          if (newForklift.soldToCustomer) {
+            newForklift.locationType = 'Sold';
+          } else if (newForklift.siteCompany) {
             newForklift.locationType = 'On-Site';
           } else {
-             newForklift.locationType = 'Workshop';
+            newForklift.locationType = 'Workshop';
           }
           
           await addDocumentNonBlocking(collection(firestore, 'forklifts'), newForklift);

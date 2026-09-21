@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button";
 import { Forklift, JobCard, Company } from "@/lib/data";
-import { EllipsisVertical, Pencil, PlusCircle, Search, Warehouse, User, Phone, Wrench, ListFilter, Upload, AlertTriangle, ChevronDown, XCircle, Download, MapPin, CalendarDays, Zap, Ruler, Hash } from "lucide-react";
+import { EllipsisVertical, Pencil, PlusCircle, Search, Warehouse, User, Phone, Wrench, ListFilter, Upload, AlertTriangle, ChevronDown, XCircle, Download, MapPin, CalendarDays, Zap, Ruler, Hash, ShoppingBag } from "lucide-react";
 import { useCollection, useFirebase, useMemoFirebase } from "@/firebase";
 import { collection, doc, query, where, orderBy, deleteField } from "firebase/firestore";
 import { useState, useMemo, Fragment, useCallback, useEffect } from "react";
@@ -157,7 +157,8 @@ export default function ForkliftsPage() {
     const inWorkshop = forklifts?.filter(f => f.locationType === 'Workshop').length || 0;
     const onSite = forklifts?.filter(f => f.locationType === 'On-Site').length || 0;
     const notConfirmed = forklifts?.filter(f => f.locationType === 'Not Confirm').length || 0;
-    return { total, inWorkshop, onSite, notConfirmed };
+    const sold = forklifts?.filter(f => f.locationType === 'Sold').length || 0;
+    return { total, inWorkshop, onSite, notConfirmed, sold };
   }, [forklifts]);
 
   const handleDelayedAction = (action: () => void) => {
@@ -204,9 +205,9 @@ export default function ForkliftsPage() {
   }, [forklifts]);
   
   const locationOptions = useMemo(() => {
-      if (!forklifts) return ['All', 'Workshop', 'On-Site', 'Not Confirm'];
+      if (!forklifts) return ['All', 'Workshop', 'On-Site', 'Not Confirm', 'Sold'];
       const sites = new Set(forklifts.map(f => f.siteCompany).filter(Boolean));
-      return ['All', 'Workshop', 'On-Site', 'Not Confirm', ...Array.from(sites)];
+      return ['All', 'Workshop', 'On-Site', 'Not Confirm', 'Sold', ...Array.from(sites)];
   }, [forklifts]);
 
   const handleClearFilters = () => {
@@ -231,7 +232,7 @@ export default function ForkliftsPage() {
       
       let locationMatch = true;
       if (locationFilter !== 'All') {
-          if (['Workshop', 'On-Site', 'Not Confirm'].includes(locationFilter)) {
+          if (['Workshop', 'On-Site', 'Not Confirm', 'Sold'].includes(locationFilter)) {
               locationMatch = forklift.locationType === locationFilter;
           } else {
               locationMatch = forklift.siteCompany === locationFilter;
@@ -252,7 +253,9 @@ export default function ForkliftsPage() {
           searchInField('make') || 
           searchInField('model') ||
           searchInField('siteCompany') ||
-          searchInField('siteArea');
+          searchInField('siteArea') ||
+          searchInField('soldToCustomer') ||
+          searchInField('soldRemarks');
       } else {
         searchMatch = searchInField(searchField as keyof Forklift);
       }
@@ -285,11 +288,12 @@ export default function ForkliftsPage() {
   const handleFormSubmit = (formData: Partial<ForkliftFormData>) => {
     if (!firestore) return;
 
-    const { firm, ...restOfFormData } = formData;
+    const { firm, salePrice, ...restOfFormData } = formData;
     
     const dataToSubmit: any = {
       ...restOfFormData,
       year: formData.year ? parseInt(formData.year, 10) : new Date().getFullYear(),
+      salePrice: salePrice ? parseFloat(salePrice) : null,
     };
 
     if (formData.locationType === 'Workshop' || formData.locationType === 'Not Confirm') {
@@ -297,6 +301,10 @@ export default function ForkliftsPage() {
       dataToSubmit.siteArea = '';
       dataToSubmit.siteContactPerson = '';
       dataToSubmit.siteContactNumber = '';
+      dataToSubmit.soldToCustomer = '';
+      dataToSubmit.soldDate = '';
+      dataToSubmit.salePrice = null;
+      dataToSubmit.soldRemarks = '';
     }
 
     if (selectedForklift) {
@@ -384,6 +392,8 @@ export default function ForkliftsPage() {
         return <ForkliftIcon className="mr-1.5 h-3 w-3" />;
       case 'Not Confirm':
         return <AlertTriangle className="mr-1.5 h-3 w-3" />;
+      case 'Sold':
+        return <ShoppingBag className="mr-1.5 h-3 w-3 text-purple-600 dark:text-purple-400" />;
       default:
         return null;
     }
@@ -401,6 +411,9 @@ export default function ForkliftsPage() {
       case 'Not Confirm':
         text = 'Not Confirmed';
         break;
+      case 'Sold':
+        text = forklift.soldToCustomer ? `Sold: ${forklift.soldToCustomer}` : 'Sold';
+        break;
       default:
         text = 'Unknown';
     }
@@ -416,6 +429,8 @@ export default function ForkliftsPage() {
         return 'border-amber-500/60 bg-amber-50 text-amber-700 dark:border-amber-400/50 dark:bg-amber-900/20 dark:text-amber-400';
       case 'Not Confirm':
         return 'border-red-500/60 bg-red-50 text-red-700 dark:border-red-400/50 dark:bg-red-900/20 dark:text-red-400';
+      case 'Sold':
+        return 'border-purple-500/60 bg-purple-50 text-purple-700 dark:border-purple-400/50 dark:bg-purple-900/20 dark:text-purple-400 font-bold';
       default:
         return '';
     }
@@ -481,7 +496,7 @@ export default function ForkliftsPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
           <Card onClick={() => setLocationFilter('Workshop')} className={cn(cardClassName, "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-emerald-500/20")}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-[10px] font-black uppercase tracking-[0.15em] opacity-80">In Workshop</CardTitle>
@@ -510,6 +525,16 @@ export default function ForkliftsPage() {
             <CardContent>
               <div className="text-3xl font-black tracking-tighter">{isLoading ? '...' : stats.notConfirmed}</div>
               <p className="text-[10px] font-medium text-white/70 mt-1 uppercase tracking-tight">Updates required</p>
+            </CardContent>
+          </Card>
+          <Card onClick={() => setLocationFilter('Sold')} className={cn(cardClassName, "bg-gradient-to-br from-purple-600 to-purple-700 text-white shadow-purple-600/20")}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.15em] opacity-80">Sold Fleet</CardTitle>
+              <ShoppingBag className="h-5 w-5 text-white/70" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-black tracking-tighter">{isLoading ? '...' : stats.sold}</div>
+              <p className="text-[10px] font-medium text-white/70 mt-1 uppercase tracking-tight">Asset sale units</p>
             </CardContent>
           </Card>
           <Card onClick={handleClearFilters} className={cn(cardClassName, "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-blue-500/20")}>
@@ -742,6 +767,37 @@ export default function ForkliftsPage() {
                                                   <Label className="text-[10px] font-bold text-muted-foreground/80 uppercase flex items-center gap-1.5"><Phone className="h-3 w-3 text-primary" /> Contact Number</Label>
                                                   <p className="text-sm font-bold text-green-600 dark:text-green-400">{forklift.siteContactNumber || 'N/A'}</p>
                                                 </div>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {forklift.locationType === 'Sold' && (
+                                            <div className="space-y-4 pt-4 border-t border-border/50">
+                                              <h4 className="text-[10px] uppercase font-black text-purple-700 dark:text-purple-400 tracking-[0.2em] flex items-center gap-2">
+                                                <ShoppingBag className="h-3.5 w-3.5" />
+                                                Equipment Sale Record
+                                              </h4>
+                                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4 bg-purple-50/40 dark:bg-purple-950/20 p-4 rounded-xl border border-purple-200 dark:border-purple-800">
+                                                <div className="space-y-1">
+                                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">Buyer / Sold To</Label>
+                                                  <p className="text-sm font-black text-foreground uppercase">{forklift.soldToCustomer || 'N/A'}</p>
+                                                </div>
+                                                <div className="space-y-1">
+                                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">Sale Date</Label>
+                                                  <p className="text-sm font-bold text-foreground">{forklift.soldDate || 'N/A'}</p>
+                                                </div>
+                                                <div className="space-y-1">
+                                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">Sale Price</Label>
+                                                  <p className="text-sm font-mono font-black text-purple-700 dark:text-purple-300">
+                                                    {forklift.salePrice ? `₹${Number(forklift.salePrice).toLocaleString('en-IN')}` : 'N/A'}
+                                                  </p>
+                                                </div>
+                                                {forklift.soldRemarks && (
+                                                  <div className="space-y-1 col-span-1 sm:col-span-3 pt-2 border-t border-purple-200/50 dark:border-purple-800/50">
+                                                    <Label className="text-[10px] font-bold text-muted-foreground uppercase">Sale Invoice / Remarks</Label>
+                                                    <p className="text-xs text-muted-foreground font-medium">{forklift.soldRemarks}</p>
+                                                  </div>
+                                                )}
                                               </div>
                                             </div>
                                           )}
