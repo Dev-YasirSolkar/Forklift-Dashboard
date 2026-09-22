@@ -621,60 +621,83 @@ export default function ChallansPage() {
                                     </div>
                                     
                                     <div className="space-y-2">
-                                        {group.items.map(challan => (
-                                            <Card key={challan.id} className={cn(
-                                                "group relative bg-card border-none shadow-sm hover:shadow-md transition-all duration-200 rounded-2xl overflow-hidden border-l-4",
-                                                challan.enterprise === 'Vithal' ? "border-l-emerald-500" : "border-l-blue-600"
-                                            )}>
-                                                <div className="flex flex-row items-center justify-between p-3 sm:p-4 gap-4">
+                                        {group.items.map(challan => {
+                                            const firmName = challan.enterprise || 'Vithal';
+                                            const isVithal = firmName === 'Vithal';
+                                            return (
+                                            <Card 
+                                                key={challan.id} 
+                                                onClick={() => handleOpenView(challan)}
+                                                className={cn(
+                                                    "group relative bg-card border shadow-sm hover:shadow-md hover:border-primary/30 transition-all duration-200 rounded-2xl overflow-hidden border-l-4 cursor-pointer",
+                                                    isVithal ? "border-l-emerald-500" : "border-l-blue-600"
+                                                )}
+                                            >
+                                                <div className="flex flex-row items-center justify-between p-3.5 sm:p-4 gap-4">
                                                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                        <div className="space-y-0.5 min-w-0 flex-1">
-                                                            <div className="flex items-center gap-2">
+                                                        <div className="space-y-1 min-w-0 flex-1">
+                                                            <div className="flex items-center gap-2 flex-wrap">
                                                                 <p className="font-black text-sm tracking-tight text-foreground truncate">{challan.challanNo}</p>
-                                                                <Badge variant="outline" className="text-[7px] font-black py-0 h-3.5 border-muted-foreground/10 uppercase shrink-0">{challan.enterprise}</Badge>
+                                                                <Badge 
+                                                                    variant="outline" 
+                                                                    className={cn(
+                                                                        "text-[8px] font-black py-0.5 px-2 border-none uppercase tracking-wider shrink-0",
+                                                                        isVithal ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" : "bg-blue-500/15 text-blue-700 dark:text-blue-400"
+                                                                    )}
+                                                                >
+                                                                    {isVithal ? 'Vithal Enterprises' : 'R.V. Enterprises'}
+                                                                </Badge>
                                                             </div>
-                                                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                                                <span className="flex items-center gap-1 shrink-0"><Clock className="h-2.5 w-2.5" /> {challan.date ? (() => { try { return format(parseISO(challan.date), 'dd MMM'); } catch (e) { return challan.date; } })() : 'NO DATE'}</span>
-                                                                <span className="opacity-20 shrink-0">|</span>
-                                                                <span className="flex items-center gap-1 text-primary whitespace-normal break-words leading-tight"><Building2 className="h-2.5 w-2.5 shrink-0" /> {challan.deliveryToName}</span>
+                                                            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground flex-wrap">
+                                                                <span className="text-muted-foreground">{challan.fromName || (isVithal ? 'Vithal Enterprises' : 'R.V. Enterprises')}</span>
+                                                                <span className="text-primary font-black">➔</span>
+                                                                <span className="text-primary font-black">{challan.deliveryToName}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-3 text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                                                <span className="flex items-center gap-1 shrink-0">
+                                                                    <Clock className="h-3 w-3 text-muted-foreground/70" /> 
+                                                                    {challan.date ? (() => { try { return format(parseISO(challan.date), 'dd MMM yyyy'); } catch (e) { return challan.date; } })() : 'NO DATE'}
+                                                                </span>
+                                                                <span className="opacity-30">|</span>
+                                                                <span className="flex items-center gap-1 shrink-0">
+                                                                    <Car className="h-3 w-3 text-muted-foreground/70" /> 
+                                                                    {challan.vehicleNo || 'SELF / YARD'}
+                                                                </span>
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    <div className="flex items-center gap-4 shrink-0">
-                                                        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-muted/30 rounded-lg border">
-                                                            <Car className="h-3 w-3 text-muted-foreground" />
-                                                            <p className="text-[10px] font-black text-foreground uppercase truncate">{challan.vehicleNo || 'SELF'}</p>
-                                                        </div>
-
-                                                        <div className="flex items-center" onClick={e => e.stopPropagation()}>
-                                                            <DropdownMenu modal={false}>
-                                                                <DropdownMenuTrigger asChild>
-                                                                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-muted transition-all">
-                                                                        <EllipsisVertical className="h-4 w-4" />
-                                                                    </Button>
-                                                                </DropdownMenuTrigger>
-                                                                <DropdownMenuContent align="end" className="w-44 rounded-2xl p-1.5 shadow-xl border-none z-[100]">
-                                                                    <DropdownMenuItem onClick={() => handleOpenView(challan)} className="rounded-xl h-10 cursor-pointer">
-                                                                        <Eye className="mr-2 h-4 w-4 text-primary" /> 
-                                                                        <span className="font-bold text-xs uppercase tracking-tight">View Details</span>
-                                                                    </DropdownMenuItem>
-                                                                    <DropdownMenuItem onClick={() => loadHistoryRecord(challan)} className="rounded-xl h-10 cursor-pointer">
-                                                                        <Pencil className="mr-2 h-4 w-4 text-amber-500" />
-                                                                        <span className="font-bold text-xs uppercase tracking-tight">Edit Record</span>
-                                                                    </DropdownMenuItem>
-                                                                    <DropdownMenuSeparator className="my-1.5 opacity-50" />
-                                                                    <DropdownMenuItem onClick={() => handleDeleteRecord(challan.id)} className="rounded-xl h-10 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/5">
-                                                                        <Trash2 className="mr-2 h-4 w-4" />
-                                                                        <span className="font-bold text-xs uppercase tracking-tight">Delete Record</span>
-                                                                    </DropdownMenuItem>
-                                                                </DropdownMenuContent>
-                                                            </DropdownMenu>
-                                                        </div>
+                                                    <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                                                        <Button variant="ghost" size="sm" onClick={() => handleOpenView(challan)} className="hidden sm:flex text-xs font-bold rounded-xl hover:bg-primary/10 hover:text-primary">
+                                                            <Eye className="mr-1.5 h-3.5 w-3.5" /> View
+                                                        </Button>
+                                                        <DropdownMenu modal={false}>
+                                                            <DropdownMenuTrigger asChild>
+                                                                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-muted transition-all">
+                                                                    <EllipsisVertical className="h-4 w-4" />
+                                                                </Button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end" className="w-44 rounded-2xl p-1.5 shadow-xl border-none z-[100]">
+                                                                <DropdownMenuItem onClick={() => handleOpenView(challan)} className="rounded-xl h-10 cursor-pointer">
+                                                                    <Eye className="mr-2 h-4 w-4 text-primary" /> 
+                                                                    <span className="font-bold text-xs uppercase tracking-tight">View Details</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem onClick={() => loadHistoryRecord(challan)} className="rounded-xl h-10 cursor-pointer">
+                                                                    <Pencil className="mr-2 h-4 w-4 text-amber-500" />
+                                                                    <span className="font-bold text-xs uppercase tracking-tight">Edit Record</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuSeparator className="my-1.5 opacity-50" />
+                                                                <DropdownMenuItem onClick={() => handleDeleteRecord(challan.id)} className="rounded-xl h-10 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/5">
+                                                                    <Trash2 className="mr-2 h-4 w-4" />
+                                                                    <span className="font-bold text-xs uppercase tracking-tight">Delete Record</span>
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
                                                     </div>
                                                 </div>
                                             </Card>
-                                        ))}
+                                        );
+                                        })}
                                     </div>
                                 </div>
                             )})
