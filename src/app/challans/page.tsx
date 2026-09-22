@@ -113,7 +113,7 @@ export default function ChallansPage() {
     const { data: savedVehicles } = useCollection<Vehicle>(vehiclesQuery);
 
     const vehicleSuggestions = useMemo(() => {
-        const list: { value: string; subtext?: string }[] = [];
+        const list: { value: string; subtext?: string; isMaster?: boolean; id?: string }[] = [];
         const seen = new Set<string>();
 
         savedVehicles?.forEach(v => {
@@ -122,7 +122,9 @@ export default function ChallansPage() {
                 seen.add(val);
                 list.push({ 
                     value: val, 
-                    subtext: [v.transporterName, v.driverName].filter(Boolean).join(' • ') || 'Saved Truck' 
+                    subtext: [v.transporterName, v.driverName].filter(Boolean).join(' • ') || 'Saved Master Truck',
+                    isMaster: true,
+                    id: v.id,
                 });
             }
         });
@@ -131,7 +133,11 @@ export default function ChallansPage() {
             const val = c.vehicleNo?.trim().toUpperCase();
             if (val && val !== 'SELF' && val !== 'YARD' && !seen.has(val)) {
                 seen.add(val);
-                list.push({ value: val, subtext: `Used in Challan #${c.challanNo}` });
+                list.push({ 
+                    value: val, 
+                    subtext: `Used in Challan #${c.challanNo}`,
+                    isMaster: false
+                });
             }
         });
 
@@ -489,6 +495,7 @@ export default function ChallansPage() {
             setNewTruckNo('');
             setNewTransporterName('');
             setNewDriverName('');
+            setIsAddTruckOpen(false);
             toast({ title: 'Truck Saved', description: `${formattedTruckNo} added to vehicle master.` });
         } catch (error) {
             console.error('Error saving vehicle:', error);
@@ -839,48 +846,19 @@ export default function ChallansPage() {
                                                      onClick={() => setIsAddTruckOpen(true)}
                                                      className="text-[9px] text-primary hover:underline font-bold uppercase cursor-pointer flex items-center gap-1"
                                                  >
-                                                     <Truck className="h-3 w-3" /> Master Trucks
+                                                     <Truck className="h-3 w-3" /> Pick / Manage Trucks
                                                  </button>
                                                  {vehicleNo && (
                                                      <button type="button" onClick={() => setVehicleNo('')} className="text-[9px] text-muted-foreground hover:text-foreground font-bold uppercase underline">Clear</button>
                                                  )}
                                              </div>
                                          </div>
-                                         <div className="flex gap-2">
-                                             <div className="relative flex-1">
-                                                 <Input 
-                                                     value={vehicleNo} 
-                                                     onChange={e => setVehicleNo(e.target.value.toUpperCase())} 
-                                                     placeholder="e.g. MH-04-AB-1234 or Pick from list" 
-                                                     className="h-11 font-bold rounded-xl uppercase pr-10" 
-                                                 />
-                                                 <DropdownMenu modal={false}>
-                                                     <DropdownMenuTrigger asChild>
-                                                         <Button variant="ghost" size="sm" className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 p-0 rounded-lg text-muted-foreground hover:text-foreground">
-                                                             <ListFilter className="h-4 w-4" />
-                                                         </Button>
-                                                     </DropdownMenuTrigger>
-                                                     <DropdownMenuContent align="end" className="w-72 max-h-60 overflow-y-auto rounded-2xl p-2 shadow-xl border z-[100]">
-                                                         <div className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground">Select Previous / Master Truck</div>
-                                                         <DropdownMenuSeparator className="my-1" />
-                                                         {vehicleSuggestions.length > 0 ? (
-                                                             vehicleSuggestions.map((s, idx) => (
-                                                                 <DropdownMenuItem 
-                                                                     key={idx} 
-                                                                     onClick={() => setVehicleNo(s.value)}
-                                                                     className="flex flex-col items-start rounded-xl p-2 cursor-pointer hover:bg-primary/5"
-                                                                 >
-                                                                     <span className="font-black text-xs tracking-wider">{s.value}</span>
-                                                                     {s.subtext && <span className="text-[9px] text-muted-foreground">{s.subtext}</span>}
-                                                                 </DropdownMenuItem>
-                                                             ))
-                                                         ) : (
-                                                             <div className="p-3 text-center text-xs text-muted-foreground italic">No trucks recorded yet</div>
-                                                         )}
-                                                     </DropdownMenuContent>
-                                                 </DropdownMenu>
-                                             </div>
-                                         </div>
+                                         <Input 
+                                             value={vehicleNo} 
+                                             onChange={e => setVehicleNo(e.target.value.toUpperCase())} 
+                                             placeholder="e.g. MH-04-AB-1234 (or click Pick Trucks)" 
+                                             className="h-11 font-bold rounded-xl uppercase" 
+                                         />
                                     </div>
                                     <div className="space-y-2">
                                          <div className="flex justify-between items-center">
@@ -1249,17 +1227,17 @@ export default function ChallansPage() {
             </Dialog>
 
             <Dialog open={isAddTruckOpen} onOpenChange={setIsAddTruckOpen}>
-                <DialogContent className="max-w-[95vw] sm:max-w-md p-0 rounded-3xl overflow-hidden border-none shadow-2xl">
+                <DialogContent className="max-w-[95vw] sm:max-w-lg p-0 rounded-3xl overflow-hidden border-none shadow-2xl">
                     <DialogHeader className="p-6 bg-primary/5 border-b border-primary/10">
                         <DialogTitle className="flex items-center gap-2 text-primary font-black">
                             <Truck className="h-5 w-5" />
-                            Transport Truck Master
+                            Truck Master & Suggestions
                         </DialogTitle>
-                        <DialogDescription className="text-xs uppercase font-bold tracking-widest opacity-60">Add and manage trucks for dispatch delivery challans</DialogDescription>
+                        <DialogDescription className="text-xs uppercase font-bold tracking-widest opacity-60">Select from saved trucks or register a new transport truck</DialogDescription>
                     </DialogHeader>
                     <div className="p-6 space-y-6">
                         <div className="space-y-3 p-4 bg-muted/20 rounded-2xl border">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-primary">Add New Truck</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1"><Plus className="h-3 w-3" /> Add New Truck to Master</p>
                             <div className="space-y-2">
                                 <Label className="text-[10px] font-bold uppercase text-muted-foreground">Vehicle Reg. No. *</Label>
                                 <Input 
@@ -1295,54 +1273,62 @@ export default function ChallansPage() {
                                 className="w-full h-10 font-black uppercase tracking-widest rounded-xl shadow-md"
                             >
                                 {isSavingTruck ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
-                                Save Truck to Master
+                                Save Truck & Use
                             </Button>
                         </div>
 
                         <div className="space-y-2">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Saved Master Trucks ({savedVehicles?.length || 0})</p>
-                            <ScrollArea className="h-48 rounded-2xl border bg-background p-2">
-                                {savedVehicles && savedVehicles.length > 0 ? (
+                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Select Previous / Master Truck ({vehicleSuggestions.length})</p>
+                            <ScrollArea className="h-56 rounded-2xl border bg-background p-2">
+                                {vehicleSuggestions.length > 0 ? (
                                     <div className="space-y-2">
-                                        {savedVehicles.map(v => (
-                                            <div key={v.id} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/20 border hover:border-primary/30 transition-all">
+                                        {vehicleSuggestions.map((s, idx) => (
+                                            <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/20 border hover:border-primary/30 transition-all">
                                                 <div>
-                                                    <p className="font-black text-xs uppercase tracking-wider">{v.vehicleNo}</p>
-                                                    {(v.transporterName || v.driverName) && (
-                                                        <p className="text-[10px] text-muted-foreground font-medium">
-                                                            {[v.transporterName, v.driverName].filter(Boolean).join(' • ')}
-                                                        </p>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="font-black text-xs uppercase tracking-wider">{s.value}</p>
+                                                        {s.isMaster ? (
+                                                            <Badge variant="secondary" className="text-[8px] font-black uppercase px-1.5 py-0 bg-primary/10 text-primary border-none">Master</Badge>
+                                                        ) : (
+                                                            <Badge variant="outline" className="text-[8px] font-bold uppercase px-1.5 py-0 text-muted-foreground">Challan History</Badge>
+                                                        )}
+                                                    </div>
+                                                    {s.subtext && (
+                                                        <p className="text-[10px] text-muted-foreground font-medium pt-0.5">{s.subtext}</p>
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-1">
                                                     <Button 
                                                         variant="ghost" 
                                                         size="sm" 
-                                                        onClick={() => { setVehicleNo(v.vehicleNo); setIsAddTruckOpen(false); }}
+                                                        onClick={() => { setVehicleNo(s.value); setIsAddTruckOpen(false); }}
                                                         className="h-7 text-[10px] font-bold text-primary hover:bg-primary/10 rounded-lg uppercase"
                                                     >
                                                         Use
                                                     </Button>
-                                                    <Button 
-                                                        variant="ghost" 
-                                                        size="icon" 
-                                                        onClick={() => handleDeleteTruck(v.id, v.vehicleNo)}
-                                                        className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-lg"
-                                                    >
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    </Button>
+                                                    {s.isMaster && s.id && (
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="icon" 
+                                                            onClick={() => handleDeleteTruck(s.id!, s.value)}
+                                                            className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-lg"
+                                                            title="Delete from Master"
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="text-center py-12 text-xs text-muted-foreground italic">No master trucks added yet.</div>
+                                    <div className="text-center py-12 text-xs text-muted-foreground italic">No trucks recorded yet.</div>
                                 )}
                             </ScrollArea>
                         </div>
                     </div>
                     <DialogFooter className="p-4 bg-muted/20 border-t">
-                        <Button variant="ghost" onClick={() => setIsAddTruckOpen(false)} className="w-full h-10 font-black uppercase tracking-widest rounded-xl">Done</Button>
+                        <Button variant="ghost" onClick={() => setIsAddTruckOpen(false)} className="w-full h-10 font-black uppercase tracking-widest rounded-xl">Close</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
