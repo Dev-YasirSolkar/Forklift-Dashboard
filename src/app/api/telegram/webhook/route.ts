@@ -19,8 +19,12 @@ import {
   transcribeTelegramVoiceAudio,
   EnterpriseType,
   AssistantResponse,
+  sendTelegramMessage,
+  sendTelegramPDF,
+  answerTelegramCallback,
+  clearTelegramMessageButtons,
+  dispatchAssistantResponse,
 } from '@/lib/telegram-assistant';
-import { sendTelegramMessage, sendTelegramPDF, answerTelegramCallback, clearTelegramMessageButtons, dispatchAssistantResponse } from '@/lib/telegram-utils';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -156,7 +160,7 @@ export async function POST(req: Request) {
           }
           if (action === 'fleet') {
             await sendTelegramMessage(token, chatId, `👉 *Selected:* \`🚜 Total Fleet Overview\``);
-            const res = await getFleetStatus('All', activeFirm);
+            const res = await getFleetStatus(undefined, activeFirm);
             await answerTelegramCallback(token, callbackId);
             await dispatchAssistantResponse(token, chatId, res);
             return NextResponse.json({ ok: true });

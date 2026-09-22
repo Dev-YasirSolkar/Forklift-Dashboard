@@ -39,6 +39,7 @@ export interface AssistantResponse {
 }
 
 export type IntentType =
+  | 'company_summary'
   | 'pending_balance'
   | 'pending_bill_count'
   | 'pending_bill_list'

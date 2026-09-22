@@ -40,13 +40,14 @@ export default function Dashboard() {
   // Chart data
   const forkliftLocationData = useMemo(() => {
     if (!forklifts) return [];
-    const counts = {
+    const counts: Record<string, number> = {
       Workshop: 0,
       'On-Site': 0,
       'Not Confirm': 0,
+      Sold: 0,
     };
     forklifts.forEach(f => {
-      if (f.locationType in counts) {
+      if (f.locationType && f.locationType in counts) {
         counts[f.locationType]++;
       }
     });
@@ -54,6 +55,7 @@ export default function Dashboard() {
       { name: 'Workshop', value: counts.Workshop },
       { name: 'On-Site', value: counts['On-Site'] },
       { name: 'Not Confirmed', value: counts['Not Confirm'] },
+      { name: 'Sold', value: counts.Sold },
     ].filter(item => item.value > 0);
   }, [forklifts]);
   

@@ -306,13 +306,3 @@ export type Challan = {
     };
     createdAt: string;
 };
-
-export type Vehicle = {
-    id: string;
-    vehicleNo: string;
-    transporterName?: string;
-    driverName?: string;
-    driverPhone?: string;
-    vehicleType?: string;
-    createdAt?: string;
-};
