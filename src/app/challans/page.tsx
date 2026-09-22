@@ -144,13 +144,60 @@ export default function ChallansPage() {
         );
     }, [forklifts, forkliftSearch]);
 
+    const getNextChallanNo = useCallback((firm: 'Vithal' | 'RV') => {
+        if (!savedChallans || savedChallans.length === 0) return '001';
+        
+        const firmChallans = savedChallans.filter(c => (c.enterprise || 'Vithal') === firm);
+
+        if (firmChallans.length === 0) return '001';
+
+        let maxNum = 0;
+        let bestFormat = '';
+
+        firmChallans.forEach(c => {
+            const raw = c.challanNo || '';
+            const matches = raw.match(/\d+/g);
+            if (matches && matches.length > 0) {
+                const num = parseInt(matches[0], 10);
+                if (num > maxNum) {
+                    maxNum = num;
+                    bestFormat = raw;
+                }
+            }
+        });
+
+        if (maxNum === 0) return '001';
+
+        const nextNum = maxNum + 1;
+
+        if (bestFormat) {
+            const match = bestFormat.match(/^(\D*)(\d+)(.*)$/);
+            if (match) {
+                const prefix = match[1];
+                const digits = match[2];
+                const suffix = match[3];
+                const paddedNext = String(nextNum).padStart(digits.length, '0');
+                return `${prefix}${paddedNext}${suffix}`;
+            }
+        }
+
+        return String(nextNum).padStart(3, '0');
+    }, [savedChallans]);
+
+    const handleEnterpriseChange = (newFirm: 'Vithal' | 'RV') => {
+        setEnterprise(newFirm);
+        if (!editingChallanId) {
+            setChallanNo(getNextChallanNo(newFirm));
+        }
+    };
+
     const groupedHistory = useMemo(() => {
         if (!savedChallans) return [];
         
         let list = savedChallans;
 
         if (firmFilter !== 'All') {
-            list = list.filter(c => c.enterprise === firmFilter);
+            list = list.filter(c => (c.enterprise || 'Vithal') === firmFilter);
         }
 
         if (clientFilter !== 'All') {
@@ -346,7 +393,7 @@ export default function ChallansPage() {
 
     const loadHistoryRecord = (record: Challan) => {
         setEditingChallanId(record.id);
-        setEnterprise(record.enterprise as 'Vithal' | 'RV');
+        setEnterprise((record.enterprise || 'Vithal') as 'Vithal' | 'RV');
         setChallanNo(record.challanNo);
         setVehicleNo(record.vehicleNo || '');
         setDate(record.date || '');
@@ -443,7 +490,8 @@ export default function ChallansPage() {
 
     const handleCreateNew = useCallback(() => {
         setEditingChallanId(null);
-        setChallanNo('');
+        setEnterprise('Vithal');
+        setChallanNo(getNextChallanNo('Vithal'));
         setVehicleNo('');
         setDate(format(new Date(), 'yyyy-MM-dd'));
         setItems([{ particulars: '', amount: 0 }]);
@@ -452,7 +500,7 @@ export default function ChallansPage() {
         setManualDeliveryToName('');
         setManualFromName('');
         setIsFormOpen(true);
-    }, []);
+    }, [getNextChallanNo]);
 
     const resetFilters = () => {
         setHistorySearch('');
@@ -651,23 +699,35 @@ export default function ChallansPage() {
                                         <CardTitle>{editingChallanId ? "Update Challan" : "Challan Editor"}</CardTitle>
                                         <CardDescription>{editingChallanId ? `Editing record ${challanNo}` : "Enter details and item specifications."}</CardDescription>
                                     </div>
-                                    <Select value={enterprise} onValueChange={(v: any) => setEnterprise(v)}>
-                                        <SelectTrigger className="w-full sm:w-40 h-10 font-bold bg-background rounded-xl border-primary/20">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="Vithal">Vithal Ent.</SelectItem>
-                                            <SelectItem value="RV">R.V. Ent.</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
+                                     <Select value={enterprise} onValueChange={(v: 'Vithal' | 'RV') => handleEnterpriseChange(v)}>
+                                         <SelectTrigger className="w-full sm:w-40 h-10 font-bold bg-background rounded-xl border-primary/20">
+                                             <SelectValue />
+                                         </SelectTrigger>
+                                         <SelectContent>
+                                             <SelectItem value="Vithal">Vithal Ent.</SelectItem>
+                                             <SelectItem value="RV">R.V. Ent.</SelectItem>
+                                         </SelectContent>
+                                     </Select>
+                                 </div>
                             </CardHeader>
                             <CardContent className="p-6 sm:p-8 space-y-8">
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                                    <div className="space-y-2">
-                                        <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Hash className="h-3 w-3" /> Challan No.</Label>
-                                        <Input value={challanNo} onChange={e => setChallanNo(e.target.value)} placeholder="001/24-25" className="h-11 font-bold rounded-xl" />
-                                    </div>
+                                     <div className="space-y-2">
+                                         <div className="flex justify-between items-center">
+                                             <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Hash className="h-3 w-3" /> Challan No.</Label>
+                                             {!editingChallanId && (
+                                                 <button 
+                                                     type="button" 
+                                                     onClick={() => setChallanNo(getNextChallanNo(enterprise))}
+                                                     className="text-[9px] text-primary hover:underline font-bold uppercase cursor-pointer"
+                                                     title="Auto-fill next sequential number"
+                                                 >
+                                                     Auto-Next ({getNextChallanNo(enterprise)})
+                                                 </button>
+                                             )}
+                                         </div>
+                                         <Input value={challanNo} onChange={e => setChallanNo(e.target.value)} placeholder="e.g. 001/24-25" className="h-11 font-bold rounded-xl" />
+                                     </div>
                                     <div className="space-y-2">
                                          <div className="flex justify-between items-center">
                                              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Car className="h-3 w-3" /> Vehicle No. (Optional)</Label>
