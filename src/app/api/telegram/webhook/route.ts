@@ -19,11 +19,6 @@ import {
   transcribeTelegramVoiceAudio,
   EnterpriseType,
   AssistantResponse,
-  sendTelegramMessage,
-  sendTelegramPDF,
-  answerTelegramCallback,
-  clearTelegramMessageButtons,
-  dispatchAssistantResponse,
 } from '@/lib/telegram-assistant';
 
 export const dynamic = 'force-dynamic';
