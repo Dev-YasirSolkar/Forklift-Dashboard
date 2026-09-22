@@ -9,8 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCollection, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
-import { Company, CompanySettings, Forklift, Challan } from '@/lib/data';
-import { FileDown, Plus, Trash2, Printer, Search, Building2, Car, CalendarDays, Hash, Info, Loader2, XCircle, Type, Ruler, LayoutTemplate, Settings2, Save, History, Clock, ListFilter, ArrowLeft, PlusCircle, Eye, Filter, Pencil, ChevronRight, FolderOpen, EllipsisVertical, CheckCircle2 } from 'lucide-react';
+import { Company, CompanySettings, Forklift, Challan, Vehicle } from '@/lib/data';
+import { FileDown, Plus, Trash2, Printer, Search, Building2, Car, CalendarDays, Hash, Info, Loader2, XCircle, Type, Ruler, LayoutTemplate, Settings2, Save, History, Clock, ListFilter, ArrowLeft, PlusCircle, Eye, Filter, Pencil, ChevronRight, FolderOpen, EllipsisVertical, CheckCircle2, Truck } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { generateChallanPdf, type ChallanItem } from '@/lib/challan-generator';
@@ -44,6 +44,13 @@ export default function ChallansPage() {
     const [vehicleNo, setVehicleNo] = useState('');
     const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
     const [includeStamp, setIncludeStamp] = useState(false);
+
+    // Truck / Vehicle Master State
+    const [isAddTruckOpen, setIsAddTruckOpen] = useState(false);
+    const [newTruckNo, setNewTruckNo] = useState('');
+    const [newTransporterName, setNewTransporterName] = useState('');
+    const [newDriverName, setNewDriverName] = useState('');
+    const [isSavingTruck, setIsSavingTruck] = useState(false);
     
     // Layout Customization State
     const [fromAddressFontSize, setFromAddressFontSize] = useState(10);
@@ -98,6 +105,38 @@ export default function ChallansPage() {
         [firestore, user]
     );
     const { data: savedChallans, isLoading: isLoadingHistory } = useCollection<Challan>(challansQuery);
+
+    const vehiclesQuery = useMemoFirebase(() => 
+        firestore && user ? query(collection(firestore, 'vehicles'), orderBy('vehicleNo', 'asc')) : null, 
+        [firestore, user]
+    );
+    const { data: savedVehicles } = useCollection<Vehicle>(vehiclesQuery);
+
+    const vehicleSuggestions = useMemo(() => {
+        const list: { value: string; subtext?: string }[] = [];
+        const seen = new Set<string>();
+
+        savedVehicles?.forEach(v => {
+            const val = v.vehicleNo?.trim().toUpperCase();
+            if (val && !seen.has(val)) {
+                seen.add(val);
+                list.push({ 
+                    value: val, 
+                    subtext: [v.transporterName, v.driverName].filter(Boolean).join(' • ') || 'Saved Truck' 
+                });
+            }
+        });
+
+        savedChallans?.forEach(c => {
+            const val = c.vehicleNo?.trim().toUpperCase();
+            if (val && val !== 'SELF' && val !== 'YARD' && !seen.has(val)) {
+                seen.add(val);
+                list.push({ value: val, subtext: `Used in Challan #${c.challanNo}` });
+            }
+        });
+
+        return list;
+    }, [savedVehicles, savedChallans]);
 
     const settingsRef = useMemoFirebase(() => 
         firestore && user ? doc(firestore, 'companySettings', enterprise.toLowerCase()) : null,
@@ -428,7 +467,47 @@ export default function ChallansPage() {
     const handleOpenView = (record: Challan) => {
         setSelectedChallanForView(record);
         setIsViewOpen(true);
-    }
+    };
+
+    const handleSaveTruck = async () => {
+        if (!newTruckNo.trim()) {
+            toast({ variant: 'destructive', title: 'Error', description: 'Vehicle Number is required.' });
+            return;
+        }
+        if (!firestore) return;
+
+        const formattedTruckNo = newTruckNo.trim().toUpperCase();
+        setIsSavingTruck(true);
+        try {
+            await addDocumentNonBlocking(collection(firestore, 'vehicles'), {
+                vehicleNo: formattedTruckNo,
+                transporterName: newTransporterName.trim(),
+                driverName: newDriverName.trim(),
+                createdAt: new Date().toISOString()
+            });
+            setVehicleNo(formattedTruckNo);
+            setNewTruckNo('');
+            setNewTransporterName('');
+            setNewDriverName('');
+            toast({ title: 'Truck Saved', description: `${formattedTruckNo} added to vehicle master.` });
+        } catch (error) {
+            console.error('Error saving vehicle:', error);
+            toast({ variant: 'destructive', title: 'Error', description: 'Failed to save truck.' });
+        } finally {
+            setIsSavingTruck(false);
+        }
+    };
+
+    const handleDeleteTruck = async (id: string, truckNo: string) => {
+        if (!firestore) return;
+        try {
+            await deleteDoc(doc(firestore, 'vehicles', id));
+            toast({ title: 'Truck Removed', description: `${truckNo} removed from master list.` });
+        } catch (error) {
+            console.error('Error deleting vehicle:', error);
+            toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete truck.' });
+        }
+    };
 
     const handleDeleteRecord = async (id: string) => {
         if (!firestore) return;
@@ -754,11 +833,54 @@ export default function ChallansPage() {
                                     <div className="space-y-2">
                                          <div className="flex justify-between items-center">
                                              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Car className="h-3 w-3" /> Vehicle No. (Optional)</Label>
-                                             {vehicleNo && (
-                                                 <button type="button" onClick={() => setVehicleNo('')} className="text-[9px] text-muted-foreground hover:text-foreground font-bold uppercase underline">Clear</button>
-                                             )}
+                                             <div className="flex items-center gap-2">
+                                                 <button 
+                                                     type="button" 
+                                                     onClick={() => setIsAddTruckOpen(true)}
+                                                     className="text-[9px] text-primary hover:underline font-bold uppercase cursor-pointer flex items-center gap-1"
+                                                 >
+                                                     <Truck className="h-3 w-3" /> Master Trucks
+                                                 </button>
+                                                 {vehicleNo && (
+                                                     <button type="button" onClick={() => setVehicleNo('')} className="text-[9px] text-muted-foreground hover:text-foreground font-bold uppercase underline">Clear</button>
+                                                 )}
+                                             </div>
                                          </div>
-                                         <Input value={vehicleNo} onChange={e => setVehicleNo(e.target.value)} placeholder="Leave blank or enter Vehicle No." className="h-11 font-bold rounded-xl" />
+                                         <div className="flex gap-2">
+                                             <div className="relative flex-1">
+                                                 <Input 
+                                                     value={vehicleNo} 
+                                                     onChange={e => setVehicleNo(e.target.value.toUpperCase())} 
+                                                     placeholder="e.g. MH-04-AB-1234 or Pick from list" 
+                                                     className="h-11 font-bold rounded-xl uppercase pr-10" 
+                                                 />
+                                                 <DropdownMenu modal={false}>
+                                                     <DropdownMenuTrigger asChild>
+                                                         <Button variant="ghost" size="sm" className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 p-0 rounded-lg text-muted-foreground hover:text-foreground">
+                                                             <ListFilter className="h-4 w-4" />
+                                                         </Button>
+                                                     </DropdownMenuTrigger>
+                                                     <DropdownMenuContent align="end" className="w-72 max-h-60 overflow-y-auto rounded-2xl p-2 shadow-xl border z-[100]">
+                                                         <div className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground">Select Previous / Master Truck</div>
+                                                         <DropdownMenuSeparator className="my-1" />
+                                                         {vehicleSuggestions.length > 0 ? (
+                                                             vehicleSuggestions.map((s, idx) => (
+                                                                 <DropdownMenuItem 
+                                                                     key={idx} 
+                                                                     onClick={() => setVehicleNo(s.value)}
+                                                                     className="flex flex-col items-start rounded-xl p-2 cursor-pointer hover:bg-primary/5"
+                                                                 >
+                                                                     <span className="font-black text-xs tracking-wider">{s.value}</span>
+                                                                     {s.subtext && <span className="text-[9px] text-muted-foreground">{s.subtext}</span>}
+                                                                 </DropdownMenuItem>
+                                                             ))
+                                                         ) : (
+                                                             <div className="p-3 text-center text-xs text-muted-foreground italic">No trucks recorded yet</div>
+                                                         )}
+                                                     </DropdownMenuContent>
+                                                 </DropdownMenu>
+                                             </div>
+                                         </div>
                                     </div>
                                     <div className="space-y-2">
                                          <div className="flex justify-between items-center">
@@ -1122,6 +1244,105 @@ export default function ChallansPage() {
                     </div>
                     <DialogFooter className="p-4 bg-muted/20 border-t">
                         <Button variant="ghost" onClick={() => setIsForkliftDialogOpen(false)} className="w-full h-11 font-black uppercase tracking-widest rounded-xl">Cancel Selection</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={isAddTruckOpen} onOpenChange={setIsAddTruckOpen}>
+                <DialogContent className="max-w-[95vw] sm:max-w-md p-0 rounded-3xl overflow-hidden border-none shadow-2xl">
+                    <DialogHeader className="p-6 bg-primary/5 border-b border-primary/10">
+                        <DialogTitle className="flex items-center gap-2 text-primary font-black">
+                            <Truck className="h-5 w-5" />
+                            Transport Truck Master
+                        </DialogTitle>
+                        <DialogDescription className="text-xs uppercase font-bold tracking-widest opacity-60">Add and manage trucks for dispatch delivery challans</DialogDescription>
+                    </DialogHeader>
+                    <div className="p-6 space-y-6">
+                        <div className="space-y-3 p-4 bg-muted/20 rounded-2xl border">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-primary">Add New Truck</p>
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-bold uppercase text-muted-foreground">Vehicle Reg. No. *</Label>
+                                <Input 
+                                    placeholder="MH-04-AB-1234" 
+                                    value={newTruckNo} 
+                                    onChange={e => setNewTruckNo(e.target.value.toUpperCase())}
+                                    className="h-10 font-bold rounded-xl uppercase"
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                    <Label className="text-[9px] font-bold uppercase text-muted-foreground">Transporter Name</Label>
+                                    <Input 
+                                        placeholder="e.g. Vithal Logistics" 
+                                        value={newTransporterName} 
+                                        onChange={e => setNewTransporterName(e.target.value)}
+                                        className="h-9 text-xs rounded-xl"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[9px] font-bold uppercase text-muted-foreground">Driver Name</Label>
+                                    <Input 
+                                        placeholder="e.g. Ramesh" 
+                                        value={newDriverName} 
+                                        onChange={e => setNewDriverName(e.target.value)}
+                                        className="h-9 text-xs rounded-xl"
+                                    />
+                                </div>
+                            </div>
+                            <Button 
+                                onClick={handleSaveTruck} 
+                                disabled={isSavingTruck || !newTruckNo.trim()} 
+                                className="w-full h-10 font-black uppercase tracking-widest rounded-xl shadow-md"
+                            >
+                                {isSavingTruck ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
+                                Save Truck to Master
+                            </Button>
+                        </div>
+
+                        <div className="space-y-2">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Saved Master Trucks ({savedVehicles?.length || 0})</p>
+                            <ScrollArea className="h-48 rounded-2xl border bg-background p-2">
+                                {savedVehicles && savedVehicles.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {savedVehicles.map(v => (
+                                            <div key={v.id} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/20 border hover:border-primary/30 transition-all">
+                                                <div>
+                                                    <p className="font-black text-xs uppercase tracking-wider">{v.vehicleNo}</p>
+                                                    {(v.transporterName || v.driverName) && (
+                                                        <p className="text-[10px] text-muted-foreground font-medium">
+                                                            {[v.transporterName, v.driverName].filter(Boolean).join(' • ')}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="sm" 
+                                                        onClick={() => { setVehicleNo(v.vehicleNo); setIsAddTruckOpen(false); }}
+                                                        className="h-7 text-[10px] font-bold text-primary hover:bg-primary/10 rounded-lg uppercase"
+                                                    >
+                                                        Use
+                                                    </Button>
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="icon" 
+                                                        onClick={() => handleDeleteTruck(v.id, v.vehicleNo)}
+                                                        className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-lg"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-12 text-xs text-muted-foreground italic">No master trucks added yet.</div>
+                                )}
+                            </ScrollArea>
+                        </div>
+                    </div>
+                    <DialogFooter className="p-4 bg-muted/20 border-t">
+                        <Button variant="ghost" onClick={() => setIsAddTruckOpen(false)} className="w-full h-10 font-black uppercase tracking-widest rounded-xl">Done</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

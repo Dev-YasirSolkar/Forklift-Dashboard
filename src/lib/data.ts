@@ -109,6 +109,16 @@ export type Company = {
     createdAt: string;
 }
 
+export type Vehicle = {
+    id: string;
+    vehicleNo: string;
+    transporterName?: string;
+    driverName?: string;
+    driverPhone?: string;
+    vehicleType?: string;
+    createdAt?: string;
+}
+
 export type InvoiceItem = {
     particulars: string;
     rate?: string;
@@ -295,4 +305,14 @@ export type Challan = {
         includeStamp: boolean;
     };
     createdAt: string;
-}
+};
+
+export type Vehicle = {
+    id: string;
+    vehicleNo: string;
+    transporterName?: string;
+    driverName?: string;
+    driverPhone?: string;
+    vehicleType?: string;
+    createdAt?: string;
+};
