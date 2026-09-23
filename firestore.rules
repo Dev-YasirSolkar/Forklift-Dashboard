@@ -20,9 +20,6 @@ service cloud.firestore {
     match /employees/{employeeId} {
       allow read, write: if isSignedIn();
     }
-    match /attendance/{attendanceId} {
-      allow read, write: if isSignedIn();
-    }
     match /jobCards/{jobCardId} {
       allow read, write: if isSignedIn();
     }

@@ -32,7 +32,6 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/forklifts', label: 'Forklifts', icon: ForkliftIcon },
   { href: '/reports', label: 'Job Cards', icon: Wrench },
-  { href: '/attendance', label: 'Attendance', icon: CalendarCheck },
   { href: '/employees', label: 'Employees', icon: User },
   { href: '/companies', label: 'Companies', icon: Building },
   { href: '/inventory', label: 'Inventory', icon: Warehouse },
