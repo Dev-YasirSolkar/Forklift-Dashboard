@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useCollection, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import { Company, CompanySettings, Forklift, Challan, Vehicle } from '@/lib/data';
-import { FileDown, Plus, Trash2, Printer, Search, Building2, Car, CalendarDays, Hash, Info, Loader2, XCircle, Type, Ruler, LayoutTemplate, Settings2, Save, History, Clock, ListFilter, ArrowLeft, PlusCircle, Eye, Filter, Pencil, ChevronRight, FolderOpen, EllipsisVertical, CheckCircle2, Truck } from 'lucide-react';
+import { FileDown, Plus, Trash2, Printer, Search, Building2, Car, CalendarDays, Hash, Info, Loader2, XCircle, Type, Ruler, LayoutTemplate, Settings2, Save, History, Clock, ListFilter, ArrowLeft, PlusCircle, Eye, Filter, Pencil, ChevronRight, FolderOpen, EllipsisVertical, CheckCircle2, Truck, Copy, ArrowLeftRight } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { generateChallanPdf, type ChallanItem } from '@/lib/challan-generator';
@@ -470,6 +470,70 @@ export default function ChallansPage() {
         toast({ title: 'Record Loaded', description: `Challan ${record.challanNo} details restored.` });
     };
 
+    const handleSwapLocations = () => {
+        const tempFromId = fromId;
+        const tempManualFromName = manualFromName;
+        const tempFromAddress = fromAddress;
+
+        setFromId(deliveryToId);
+        setManualFromName(manualDeliveryToName);
+        setFromAddress(deliveryToAddress);
+
+        setDeliveryToId(tempFromId);
+        setManualDeliveryToName(tempManualFromName);
+        setDeliveryToAddress(tempFromAddress);
+
+        toast({ title: 'Route Reversed', description: 'Sender & Destination addresses have been swapped.' });
+    };
+
+    const handleDuplicateRecord = (record: Challan, swapLocations: boolean = false) => {
+        const firm = (record.enterprise || 'Vithal') as 'Vithal' | 'RV';
+        setEditingChallanId(null);
+        setEnterprise(firm);
+        setChallanNo(getNextChallanNo(firm));
+        setVehicleNo(record.vehicleNo || '');
+        setDate(format(new Date(), 'yyyy-MM-dd'));
+
+        if (swapLocations) {
+            setFromId('manual');
+            setManualFromName(record.deliveryToName);
+            setFromAddress(record.deliveryToAddress);
+
+            setDeliveryToId('manual');
+            setManualDeliveryToName(record.fromName);
+            setDeliveryToAddress(record.fromAddress);
+        } else {
+            setFromId('manual');
+            setManualFromName(record.fromName);
+            setFromAddress(record.fromAddress);
+
+            setDeliveryToId('manual');
+            setManualDeliveryToName(record.deliveryToName);
+            setDeliveryToAddress(record.deliveryToAddress);
+        }
+
+        setItems(JSON.parse(JSON.stringify(record.items)));
+
+        if (record.layoutSettings) {
+            setFromAddressFontSize(record.layoutSettings.fromAddressFontSize);
+            setDeliveryToAddressFontSize(record.layoutSettings.deliveryToAddressFontSize);
+            setHeaderHeight(record.layoutSettings.headerHeight);
+            setFooterHeight(record.layoutSettings.footerHeight);
+            setSrWidth(record.layoutSettings.srWidth);
+            setAmountWidth(record.layoutSettings.amountWidth);
+            setParticularsFontSize(record.layoutSettings.particularsFontSize);
+            setTitleFontSize(record.layoutSettings.titleFontSize);
+            setHeaderDetailsFontSize(record.layoutSettings.headerDetailsFontSize);
+            setIncludeStamp(record.layoutSettings.includeStamp);
+        }
+
+        setIsFormOpen(true);
+        toast({ 
+            title: swapLocations ? 'Duplicated & Swapped (B ➔ A)' : 'Challan Duplicated', 
+            description: `Draft created with next sequential number ${getNextChallanNo(firm)}.` 
+        });
+    };
+
     const handleOpenView = (record: Challan) => {
         setSelectedChallanForView(record);
         setIsViewOpen(true);
@@ -763,7 +827,7 @@ export default function ChallansPage() {
                                                                     <EllipsisVertical className="h-4 w-4" />
                                                                 </Button>
                                                             </DropdownMenuTrigger>
-                                                            <DropdownMenuContent align="end" className="w-44 rounded-2xl p-1.5 shadow-xl border-none z-[100]">
+                                                            <DropdownMenuContent align="end" className="w-56 rounded-2xl p-1.5 shadow-xl border-none z-[100]">
                                                                 <DropdownMenuItem onClick={() => handleOpenView(challan)} className="rounded-xl h-10 cursor-pointer">
                                                                     <Eye className="mr-2 h-4 w-4 text-primary" /> 
                                                                     <span className="font-bold text-xs uppercase tracking-tight">View Details</span>
@@ -771,6 +835,15 @@ export default function ChallansPage() {
                                                                 <DropdownMenuItem onClick={() => loadHistoryRecord(challan)} className="rounded-xl h-10 cursor-pointer">
                                                                     <Pencil className="mr-2 h-4 w-4 text-amber-500" />
                                                                     <span className="font-bold text-xs uppercase tracking-tight">Edit Record</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuSeparator className="my-1.5 opacity-50" />
+                                                                <DropdownMenuItem onClick={() => handleDuplicateRecord(challan, false)} className="rounded-xl h-10 cursor-pointer">
+                                                                    <Copy className="mr-2 h-4 w-4 text-blue-500" />
+                                                                    <span className="font-bold text-xs uppercase tracking-tight">Duplicate Record</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem onClick={() => handleDuplicateRecord(challan, true)} className="rounded-xl h-10 cursor-pointer">
+                                                                    <ArrowLeftRight className="mr-2 h-4 w-4 text-indigo-500" />
+                                                                    <span className="font-bold text-xs uppercase tracking-tight">Duplicate & Swap (B ➔ A)</span>
                                                                 </DropdownMenuItem>
                                                                 <DropdownMenuSeparator className="my-1.5 opacity-50" />
                                                                 <DropdownMenuItem onClick={() => handleDeleteRecord(challan.id)} className="rounded-xl h-10 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/5">
@@ -872,6 +945,20 @@ export default function ChallansPage() {
                                 </div>
 
                                 <Separator />
+
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Route & Location Details</Label>
+                                    <Button 
+                                        type="button" 
+                                        variant="outline" 
+                                        size="sm" 
+                                        onClick={handleSwapLocations}
+                                        className="h-8 text-[10px] font-black uppercase rounded-xl border-primary/30 text-primary hover:bg-primary/10 transition-all cursor-pointer"
+                                        title="Swap Sender and Destination Locations"
+                                    >
+                                        <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Reverse Route (B ➔ A)
+                                    </Button>
+                                </div>
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                                     <div className="space-y-4">
