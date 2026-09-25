@@ -41,7 +41,7 @@ const navItems = [
   { href: '/payments', label: 'Payments', icon: Banknote },
   { href: '/salary', label: 'Salary', icon: WalletCards },
   { href: '/notes', label: 'Notes', icon: StickyNote },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/settings', label: 'Admin Control Panel', icon: Settings },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -131,10 +131,16 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled><User className="mr-2 h-4 w-4"/>Profile</DropdownMenuItem>
-              <DropdownMenuItem disabled><Settings className="mr-2 h-4 w-4"/>Settings</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer">
+                <User className="mr-2 h-4 w-4"/> My Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer font-semibold">
+                <Settings className="mr-2 h-4 w-4 text-primary"/> Admin Control Panel
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout}><LogOut className="mr-2 h-4 w-4"/>Log out</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-destructive focus:text-destructive">
+                <LogOut className="mr-2 h-4 w-4"/> Log out
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarFooter>
