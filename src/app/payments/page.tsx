@@ -358,28 +358,112 @@ export default function PaymentsPage() {
         return;
     }
 
-    const data = filteredInvoices.map(inv => ({
-        'Bill No': `${inv.billNo}-${inv.billNoSuffix || 'MHE'}`,
-        'Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
-        'Company': inv.companyName.toUpperCase(), 
-        'Grand Total': inv.grandTotal,
-        'Taxable Amount': inv.taxableAmount,
-        'TDS %': inv.tdsPercentage || 0,
-        'TDS Amount': inv.tdsAmount,
-        'Total Received': inv.totalPaid,
-        'Balance Due': inv.balance,
-        'Status': inv.status,
-        'Enterprise': inv.enterprise
-    }));
+    // Sheet 1: Invoices Summary with payment notes breakdown
+    const summaryData = filteredInvoices.map(inv => {
+        const invPayments = payments?.filter(p => p.invoiceId === inv.id) || [];
+        
+        const partialNotesSummary = invPayments.map((p, idx) => {
+            const dateStr = p.paymentDate ? format(parseISO(p.paymentDate), 'dd-MMM-yyyy') : 'N/A';
+            const modeStr = p.paymentMode || 'RTGS';
+            const noteStr = p.notes ? ` (Note: ${p.notes})` : '';
+            const chqStr = p.chequeDetails ? ` [Ref: ${p.chequeDetails}]` : '';
+            return `#${idx + 1}: ${dateStr} - ₹${p.receivedAmount} via ${modeStr}${chqStr}${noteStr}`;
+        }).join(' | ');
 
-    const ws = XLSX.utils.json_to_sheet(data);
+        return {
+            'Bill No': `${inv.billNo}-${inv.billNoSuffix || 'MHE'}`,
+            'Bill Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
+            'Company Name': inv.companyName.toUpperCase(), 
+            'Enterprise': inv.enterprise,
+            'Grand Total (₹)': inv.grandTotal,
+            'Taxable Amount (₹)': inv.taxableAmount,
+            'TDS %': inv.tdsPercentage || 0,
+            'TDS Amount (₹)': inv.tdsAmount,
+            'Advance Received (₹)': inv.advanceReceived || 0,
+            'Total Received (₹)': inv.totalPaid,
+            'Other Deductions (₹)': inv.totalDeductions,
+            'Balance Due (₹)': inv.balance,
+            'Payment Status': inv.status,
+            'Partial Payments Count': invPayments.length + (inv.advanceReceived ? 1 : 0),
+            'Payment Notes & History Summary': partialNotesSummary || (inv.advanceReceived ? `Advance Received: ₹${inv.advanceReceived}` : 'No payments recorded yet')
+        };
+    });
+
+    // Sheet 2: Detailed Partial Payments Statement (Row per payment entry)
+    const detailedTransactionsData: Array<Record<string, any>> = [];
+
+    filteredInvoices.forEach(inv => {
+        const invPayments = payments?.filter(p => p.invoiceId === inv.id) || [];
+        const hasAdvance = inv.advanceReceived && inv.advanceReceived > 0;
+
+        if (hasAdvance) {
+            detailedTransactionsData.push({
+                'Bill No': `${inv.billNo}-${inv.billNoSuffix || 'MHE'}`,
+                'Bill Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
+                'Company Name': inv.companyName.toUpperCase(),
+                'Enterprise': inv.enterprise,
+                'Payment Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
+                'Payment Mode': 'ADVANCE',
+                'Cheque / Ref Details': '-',
+                'Received Amount (₹)': inv.advanceReceived,
+                'Deductions (₹)': 0,
+                'Payment Notes / Remarks': 'Advance Payment received at bill creation',
+                'Invoice Grand Total (₹)': inv.grandTotal,
+                'Balance Due (₹)': inv.balance,
+                'Payment Status': inv.status
+            });
+        }
+
+        if (invPayments.length > 0) {
+            const sortedPayments = [...invPayments].sort((a, b) => (a.paymentDate || '').localeCompare(b.paymentDate || ''));
+            sortedPayments.forEach((p) => {
+                detailedTransactionsData.push({
+                    'Bill No': `${inv.billNo}-${inv.billNoSuffix || 'MHE'}`,
+                    'Bill Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
+                    'Company Name': inv.companyName.toUpperCase(),
+                    'Enterprise': inv.enterprise,
+                    'Payment Date': p.paymentDate ? format(parseISO(p.paymentDate), 'dd-MMM-yyyy') : 'N/A',
+                    'Payment Mode': p.paymentMode || 'RTGS',
+                    'Cheque / Ref Details': p.chequeDetails || '-',
+                    'Received Amount (₹)': p.receivedAmount || 0,
+                    'Deductions (₹)': p.otherDeductions || 0,
+                    'Payment Notes / Remarks': p.notes || '-',
+                    'Invoice Grand Total (₹)': inv.grandTotal,
+                    'Balance Due (₹)': inv.balance,
+                    'Payment Status': inv.status
+                });
+            });
+        } else if (!hasAdvance) {
+            detailedTransactionsData.push({
+                'Bill No': `${inv.billNo}-${inv.billNoSuffix || 'MHE'}`,
+                'Bill Date': format(new Date(inv.billDate), 'dd-MMM-yyyy'),
+                'Company Name': inv.companyName.toUpperCase(),
+                'Enterprise': inv.enterprise,
+                'Payment Date': 'N/A (Pending)',
+                'Payment Mode': '-',
+                'Cheque / Ref Details': '-',
+                'Received Amount (₹)': 0,
+                'Deductions (₹)': 0,
+                'Payment Notes / Remarks': 'No payments recorded yet',
+                'Invoice Grand Total (₹)': inv.grandTotal,
+                'Balance Due (₹)': inv.balance,
+                'Payment Status': inv.status
+            });
+        }
+    });
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Payments");
-    
-    const fileName = `Payments_${activeTab}_${format(new Date(), 'dd-MMM-yyyy')}.xlsx`;
+
+    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Invoices Summary");
+
+    const wsDetails = XLSX.utils.json_to_sheet(detailedTransactionsData);
+    XLSX.utils.book_append_sheet(wb, wsDetails, "Detailed Payment History");
+
+    const fileName = `Payment_Statement_${activeTab}_${format(new Date(), 'dd-MMM-yyyy')}.xlsx`;
     XLSX.writeFile(wb, fileName);
-    
-    toast({ title: 'Excel Downloaded', description: 'Payment records saved to your device.' });
+
+    toast({ title: 'Excel Statement Downloaded', description: 'Includes full payment history, dates, amounts, and notes.' });
   }
 
   const handleOpenDetailsDialog = (invoice: ProcessedInvoice) => {
@@ -1115,73 +1199,144 @@ export default function PaymentsPage() {
         </Dialog>
 
         <Dialog open={isDetailsDialogOpen} onOpenChange={(open) => { if (!open) closeAllDialogs()}}>
-            <DialogContent className="max-w-[95vw] sm:max-w-2xl p-4 sm:p-6">
+            <DialogContent className="max-w-[95vw] sm:max-w-3xl p-4 sm:p-6 rounded-2xl">
                 <DialogHeader>
-                    <DialogTitle>Payment History</DialogTitle>
-                    <DialogDescription className="text-xs sm:text-sm">
-                        Bill No. {invoiceForDetails?.billNo}-{invoiceForDetails?.billNoSuffix || 'MHE'}.
+                    <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+                        <FileText className="h-5 w-5 text-primary" />
+                        Payment & Partial Receipt History
+                    </DialogTitle>
+                    <DialogDescription className="text-xs sm:text-sm font-medium">
+                        Bill No. <span className="font-bold text-foreground">{invoiceForDetails?.billNo}-{invoiceForDetails?.billNoSuffix || 'MHE'}</span> • <span className="uppercase font-semibold">{invoiceForDetails?.companyName}</span>
                     </DialogDescription>
                 </DialogHeader>
-                <div className="py-2 max-h-[50vh] overflow-y-auto">
-                    {invoiceForDetails ? (
-                        (() => {
-                            const invoicePayments = payments?.filter(p => p.invoiceId === invoiceForDetails.id) || [];
-                            const hasAdvance = invoiceForDetails.advanceReceived && invoiceForDetails.advanceReceived > 0;
-                            
-                            if (invoicePayments.length === 0 && !hasAdvance) {
-                                return <p className="text-xs sm:text-sm text-muted-foreground text-center py-8">No records found.</p>;
-                            }
 
-                            return (
-                                <div className="space-y-3 sm:space-y-4">
-                                    {hasAdvance && (
-                                        <div className="p-3 rounded-md border bg-muted/50 dark:bg-muted/20">
-                                            <h4 className="text-[10px] sm:text-sm font-semibold mb-1 uppercase tracking-tight">Advance Payment</h4>
-                                            <div className="flex justify-between items-center text-xs">
-                                                <span className="text-muted-foreground">Amount:</span>
-                                                <span className="font-medium">{formatCurrency(invoiceForDetails.advanceReceived!)}</span>
-                                            </div>
+                {invoiceForDetails ? (
+                    (() => {
+                        const invoicePayments = payments?.filter(p => p.invoiceId === invoiceForDetails.id) || [];
+                        const hasAdvance = invoiceForDetails.advanceReceived && invoiceForDetails.advanceReceived > 0;
+                        
+                        return (
+                            <div className="space-y-4 py-2">
+                                {/* Executive Summary Banner */}
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-muted/30 border rounded-xl p-3 text-xs">
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-muted-foreground">Invoice Total</p>
+                                        <p className="font-extrabold text-sm">{formatCurrency(invoiceForDetails.grandTotal)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-green-600 dark:text-green-400">Total Received</p>
+                                        <p className="font-extrabold text-sm text-green-700 dark:text-green-300">{formatCurrency(invoiceForDetails.totalPaid)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400">TDS & Deductions</p>
+                                        <p className="font-extrabold text-sm text-amber-700 dark:text-amber-300">
+                                            {formatCurrency(invoiceForDetails.tdsAmount + invoiceForDetails.totalDeductions)}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] uppercase font-bold text-red-600 dark:text-red-400">Balance Pending</p>
+                                        <p className={cn("font-extrabold text-sm", invoiceForDetails.balance > 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground")}>
+                                            {formatCurrency(invoiceForDetails.balance)}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Table / List of Payments */}
+                                <div className="max-h-[55vh] overflow-y-auto space-y-3">
+                                    {invoicePayments.length === 0 && !hasAdvance ? (
+                                        <div className="py-12 text-center text-muted-foreground space-y-2">
+                                            <Info className="h-8 w-8 mx-auto opacity-30" />
+                                            <p className="text-xs font-bold uppercase tracking-wider">No partial payments recorded yet</p>
+                                            <p className="text-[11px] text-muted-foreground/70">Click the '+' button to record new partial payments or notes.</p>
                                         </div>
-                                    )}
-                                    {invoicePayments.length > 0 && (
-                                        <div className="border rounded-md overflow-hidden">
-                                          <Table>
-                                              <TableHeader className="bg-muted/50">
-                                                  <TableRow>
-                                                      <TableHead className="p-2 h-8 text-[10px] sm:text-xs">Date</TableHead>
-                                                      <TableHead className="p-2 h-8 text-[10px] sm:text-xs">Mode</TableHead>
-                                                      <TableHead className="p-2 h-8 text-right text-[10px] sm:text-xs">Amount</TableHead>
-                                                      <TableHead className="p-2 h-8 text-right text-[10px] sm:text-xs">Actions</TableHead>
-                                                  </TableRow>
-                                              </TableHeader>
-                                              <TableBody>
-                                                  {invoicePayments.map(payment => (
-                                                      <TableRow key={payment.id}>
-                                                          <TableCell className="p-2 text-[10px] sm:text-xs">{format(parseISO(payment.paymentDate), 'dd-MMM-yy')}</TableCell>
-                                                          <TableCell className="p-2 text-[10px] sm:text-xs">
-                                                              <div className="font-medium">{payment.paymentMode}</div>
-                                                          </TableCell>
-                                                          <TableCell className="p-2 text-right text-[10px] sm:text-xs font-medium text-green-600 dark:text-green-400">{formatCurrency(payment.receivedAmount)}</TableCell>
-                                                          <TableCell className="p-2 text-right">
-                                                              <Button variant="ghost" size="icon" onClick={() => setPaymentToDelete(payment)} className="h-6 w-6">
-                                                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                                              </Button>
-                                                          </TableCell>
-                                                      </TableRow>
-                                                  ))}
-                                              </TableBody>
-                                          </Table>
+                                    ) : (
+                                        <div className="border rounded-xl overflow-hidden shadow-xs">
+                                            <Table>
+                                                <TableHeader className="bg-muted/50">
+                                                    <TableRow className="h-9">
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase w-28">Date</TableHead>
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase min-w-[110px]">Mode & Ref</TableHead>
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase text-right w-28">Amount</TableHead>
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase text-right w-24">Deductions</TableHead>
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase min-w-[160px]">Payment Notes / Remarks</TableHead>
+                                                        <TableHead className="p-2.5 text-[10px] font-black uppercase text-right w-12"><span className="sr-only">Delete</span></TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {hasAdvance && (
+                                                        <TableRow className="bg-muted/10">
+                                                            <TableCell className="p-2.5 text-xs font-bold">
+                                                                {format(parseISO(invoiceForDetails.billDate), 'dd-MMM-yyyy')}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-xs">
+                                                                <Badge variant="outline" className="text-[9px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border-blue-200 uppercase">
+                                                                    ADVANCE
+                                                                </Badge>
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right text-xs font-black text-green-600 dark:text-green-400">
+                                                                {formatCurrency(invoiceForDetails.advanceReceived!)}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right text-xs text-muted-foreground">-</TableCell>
+                                                            <TableCell className="p-2.5 text-xs text-muted-foreground italic">
+                                                                Advance received at bill creation
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right text-xs text-muted-foreground">-</TableCell>
+                                                        </TableRow>
+                                                    )}
+                                                    {invoicePayments.map(payment => (
+                                                        <TableRow key={payment.id} className="hover:bg-muted/20">
+                                                            <TableCell className="p-2.5 text-xs font-semibold whitespace-nowrap">
+                                                                {payment.paymentDate ? format(parseISO(payment.paymentDate), 'dd-MMM-yyyy') : 'N/A'}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-xs">
+                                                                <div className="flex flex-col gap-0.5">
+                                                                    <Badge variant="outline" className="w-fit text-[9px] font-bold uppercase py-0 px-1.5 border-primary/20 bg-primary/5 text-primary">
+                                                                        {payment.paymentMode || 'RTGS'}
+                                                                    </Badge>
+                                                                    {payment.chequeDetails && (
+                                                                        <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[120px]" title={payment.chequeDetails}>
+                                                                            {payment.chequeDetails}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right text-xs font-extrabold text-green-600 dark:text-green-400">
+                                                                {formatCurrency(payment.receivedAmount)}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right text-xs font-semibold text-amber-600 dark:text-amber-400">
+                                                                {payment.otherDeductions && payment.otherDeductions > 0 
+                                                                    ? formatCurrency(payment.otherDeductions) 
+                                                                    : '-'}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-xs">
+                                                                {payment.notes ? (
+                                                                    <div className="bg-amber-500/10 dark:bg-amber-950/40 border border-amber-500/20 text-foreground dark:text-amber-200 p-2 rounded-lg text-xs leading-tight font-medium">
+                                                                        {payment.notes}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-muted-foreground/50 text-[11px] italic">No note added</span>
+                                                                )}
+                                                            </TableCell>
+                                                            <TableCell className="p-2.5 text-right">
+                                                                <Button variant="ghost" size="icon" onClick={() => setPaymentToDelete(payment)} className="h-7 w-7 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive">
+                                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
                                         </div>
                                     )}
                                 </div>
-                            )
-                        })()
-                    ) : (
-                        <p className="text-center py-4 text-xs sm:text-sm">Loading details...</p>
-                    )}
-                </div>
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsDetailsDialogOpen(false)} className="h-9 w-full sm:w-auto text-xs sm:text-sm">Close</Button>
+                            </div>
+                        );
+                    })()
+                ) : (
+                    <p className="text-center py-8 text-xs sm:text-sm">Loading details...</p>
+                )}
+                <DialogFooter className="mt-2">
+                    <Button variant="outline" onClick={() => setIsDetailsDialogOpen(false)} className="h-9 w-full sm:w-auto text-xs font-bold rounded-xl">Close</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
