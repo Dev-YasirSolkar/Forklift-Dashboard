@@ -1396,11 +1396,23 @@ export default function BillingPage() {
       case 'REMOVE_LINE_ITEM': {
         setItems(prev => {
           let idxToRemove = action.index;
-          // If no index given, look for an empty row first
-          if (idxToRemove === undefined || idxToRemove === null) {
-            idxToRemove = prev.findIndex(it => !it.particulars.trim() && (!it.amount || it.amount === 0));
+          // 1. If keyword/particulars specified, find by matching text
+          if ((idxToRemove === undefined || idxToRemove === null || idxToRemove < 0) && action.particulars) {
+            const searchKeyword = action.particulars.toLowerCase().trim();
+            const foundIdx = prev.findIndex(it => it.particulars.toLowerCase().includes(searchKeyword));
+            if (foundIdx !== -1) {
+              idxToRemove = foundIdx;
+            }
           }
-          if (idxToRemove === -1 || idxToRemove === undefined) {
+          // 2. If still no index, look for an empty row
+          if (idxToRemove === undefined || idxToRemove === null || idxToRemove < 0) {
+            const emptyIdx = prev.findIndex(it => !it.particulars.trim() && (!it.amount || it.amount === 0));
+            if (emptyIdx !== -1) {
+              idxToRemove = emptyIdx;
+            }
+          }
+          // 3. Fallback to last row
+          if (idxToRemove === undefined || idxToRemove === null || idxToRemove < 0 || idxToRemove >= prev.length) {
             idxToRemove = prev.length - 1;
           }
           if (prev.length <= 1) {
@@ -2164,7 +2176,7 @@ export default function BillingPage() {
           currentFormState={{
             isOpen: isFormDialogOpen,
             companyId: companyId,
-            companyName: selectedCompanyForNewInvoice?.name,
+            companyName: selectedCompanyForNewInvoice?.name || companies?.find(c => c.id === companyId)?.name || editingInvoice?.clientCompanyDetails?.name || (companyId ? 'Selected Company' : ''),
             billDate: billDate,
             billingMonth: billingMonth,
             poNumber: poNumber,

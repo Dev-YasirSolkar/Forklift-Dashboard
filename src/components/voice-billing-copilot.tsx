@@ -167,8 +167,8 @@ export function VoiceBillingCopilot({
         utterance.voice = selectedVoice;
       }
 
-      // Crisp, energetic, natural human pace & sweet feminine pitch
-      utterance.rate = 1.10;
+      // Crisp, energetic, fast natural human pace & sweet feminine pitch
+      utterance.rate = 1.18;
       utterance.pitch = 1.08;
 
       utterance.onstart = () => {
