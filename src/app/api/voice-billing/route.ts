@@ -3,9 +3,17 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+export interface ActiveSubject {
+  companyName?: string;
+  companyId?: string;
+  billNo?: number;
+  invoiceId?: string;
+}
+
 interface RequestBody {
   userSpeech: string;
   activeFirm: 'Vithal' | 'RV';
+  activeSubject?: ActiveSubject;
   currentFormState?: {
     isOpen: boolean;
     companyId?: string;
@@ -59,7 +67,7 @@ export async function POST(req: Request) {
     }
 
     const body: RequestBody = await req.json();
-    const { userSpeech, activeFirm, currentFormState, companies = [], recentInvoices = [], conversationHistory = [] } = body;
+    const { userSpeech, activeFirm, activeSubject, currentFormState, companies = [], recentInvoices = [], conversationHistory = [] } = body;
 
     if (!userSpeech || !userSpeech.trim()) {
       return NextResponse.json({ error: 'Speech prompt is empty' }, { status: 400 });
@@ -96,6 +104,34 @@ export async function POST(req: Request) {
 You are "Sara", an ultra-sharp, authoritative 10+ year veteran Operations & Billing Head for "Vithal Enterprises" (VE) & "R.V Enterprises" (RV) Forklift Dashboard.
 You understand everything about industrial forklift hire (3T, 4T, 5T, 8T, 10T, 16T forklifts, monthly hire charges, shift hours, overtime OT, diesel deductions, PO numbers, site locations, GST 18%, and TDS 1% / 2%).
 You speak in crisp, confident, respectful, natural Hinglish (always addressing the user respectfully as "Sir" or "Ji sir").
+
+============================================================
+0. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION ("उसका", "ISKA", "US BILL KA"):
+============================================================
+• PREVIOUS TOPIC / SUBJECT IN ACTIVE CONVERSATION:
+  ${activeSubject && (activeSubject.companyName || activeSubject.billNo)
+    ? `COMPANY: "${activeSubject.companyName || ''}" | BILL #: ${activeSubject.billNo || 'N/A'} | INVOICE ID: "${activeSubject.invoiceId || 'N/A'}"`
+    : (currentFormState?.isOpen && currentFormState?.companyName
+        ? `CURRENT OPEN BILL ON SCREEN: "${currentFormState.companyName}" (Form is Open on Screen)`
+        : 'NONE YET (Fresh conversation topic)')}
+
+CRITICAL RULES FOR PRONOUNS ("उसका", "iska", "us bill ka", "isme", "uska after GST", "uska total", "advance kitna", "PO number", etc.):
+1. When user asks a follow-up question using pronouns or without naming a company:
+   Examples:
+   - "Haan, to uska after GST amount kitna hua?"
+   - "Uska without GST amount kitna hai?"
+   - "Us bill ka total kitna bana tha?"
+   - "Advance kitna kata tha uska?"
+   - "Us bill ki date kya thi?"
+   - "Usme kaun si forklift thi?"
+   - "Us bill me PO number kya tha?"
+   -> YOU MUST 100% ANCHOR TO THE PREVIOUS SUBJECT: "${activeSubject?.companyName || currentFormState?.companyName || ''}"!
+   -> NEVER SWITCH TO A DIFFERENT COMPANY (e.g. NEVER randomly select Bisleri, Mahindra, Tata, etc. when user is asking about the previous company)!
+   -> NEVER TRIGGER FORM ACTIONS ("actions": []) for follow-up questions!
+      "uska after GST amount kitna hua?" is an INQUIRY! Keep "actions": []! DO NOT duplicate or open another bill!
+2. If user explicitly names a NEW company (e.g. "Ab Bisleri ka batao", "Mahindra ka pichhla bill duplicate karo"):
+   -> Switch activeSubject to that new company.
+3. ALWAYS return "activeSubject" in the JSON response so the client can keep tracking the active company & bill number!
 
 ============================================================
 1. DEEP BILL INQUIRY & HUMAN-LIKE FINANCIAL ASSISTANCE:
@@ -303,6 +339,12 @@ STRICT JSON SCHEMA OUTPUT:
 {
   "spokenResponse": "string (Crisp, authoritative, detailed Hinglish from 10-Yr Billing Head Sara)",
   "needsUserResponse": boolean,
+  "activeSubject": {
+    "companyName": "string (Exact company name being discussed or acted on)",
+    "companyId": "string (Optional company ID)",
+    "billNo": 124,
+    "invoiceId": "string (Optional invoice ID)"
+  },
   "actions": [
     {
       "type": "OPEN_NEW_FORM" | "DUPLICATE_INVOICE" | "SET_FIELD" | "ADD_LINE_ITEM" | "UPDATE_LINE_ITEM" | "REMOVE_LINE_ITEM" | "REMOVE_EMPTY_ITEMS" | "HIGHLIGHT_FIELD" | "SAVE_INVOICE" | "CLOSE_FORM",
@@ -341,9 +383,11 @@ STRICT JSON SCHEMA OUTPUT:
     });
 
     const models = [
-      'gemini-3.5-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-3.1-pro-preview'
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-3.5-flash-lite'
     ];
     let parsedResult: any = null;
     let lastAuthError = '';
@@ -404,6 +448,36 @@ STRICT JSON SCHEMA OUTPUT:
         needsUserResponse: false,
         actions: []
       });
+    }
+
+    // Ensure activeSubject is preserved or updated
+    if (!parsedResult.activeSubject) {
+      if (activeSubject && (activeSubject.companyName || activeSubject.billNo)) {
+        parsedResult.activeSubject = activeSubject;
+      } else if (currentFormState?.isOpen && currentFormState?.companyName) {
+        parsedResult.activeSubject = {
+          companyName: currentFormState.companyName,
+          companyId: currentFormState.companyId
+        };
+      }
+    }
+
+    // If an action was DUPLICATE_INVOICE, update activeSubject with duplicated invoice details
+    const dupAction = parsedResult.actions?.find((a: any) => a.type === 'DUPLICATE_INVOICE');
+    if (dupAction) {
+      const matchedInv = recentInvoices.find(inv => 
+        (dupAction.invoiceId && inv.id === dupAction.invoiceId) ||
+        (dupAction.billNo && inv.billNo === Number(dupAction.billNo)) ||
+        (dupAction.companyId && inv.companyId === dupAction.companyId)
+      );
+      if (matchedInv) {
+        parsedResult.activeSubject = {
+          companyName: matchedInv.companyName,
+          companyId: matchedInv.companyId,
+          billNo: matchedInv.billNo,
+          invoiceId: matchedInv.id
+        };
+      }
     }
 
     return NextResponse.json(parsedResult);

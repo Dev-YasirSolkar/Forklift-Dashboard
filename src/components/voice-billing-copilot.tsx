@@ -24,6 +24,13 @@ export interface VoiceAction {
   amount?: number;
 }
 
+export interface ActiveSubject {
+  companyName?: string;
+  companyId?: string;
+  billNo?: number;
+  invoiceId?: string;
+}
+
 interface VoiceBillingCopilotProps {
   activeFirm: 'Vithal' | 'RV';
   currentFormState: {
@@ -86,6 +93,7 @@ export function VoiceBillingCopilot({
   const [isHandsFree, setIsHandsFree] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [activeSubject, setActiveSubject] = useState<ActiveSubject | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -103,6 +111,19 @@ export function VoiceBillingCopilot({
   useEffect(() => {
     isHandsFreeRef.current = isHandsFree;
   }, [isHandsFree]);
+
+  // Keep active subject synchronized with screen if bill is open
+  useEffect(() => {
+    if (currentFormState.isOpen && currentFormState.companyName) {
+      setActiveSubject(prev => {
+        if (prev?.companyName === currentFormState.companyName) return prev;
+        return {
+          companyName: currentFormState.companyName,
+          companyId: currentFormState.companyId
+        };
+      });
+    }
+  }, [currentFormState.isOpen, currentFormState.companyName, currentFormState.companyId]);
 
   // Preload and optimize natural female voice
   useEffect(() => {
@@ -167,9 +188,9 @@ export function VoiceBillingCopilot({
         utterance.voice = selectedVoice;
       }
 
-      // Crisp, energetic, fast natural human pace & sweet feminine pitch
-      utterance.rate = 1.18;
-      utterance.pitch = 1.08;
+      // Crisp, natural human conversational pace & warm resonant pitch (pitch 1.00 avoids pinched squeak)
+      utterance.rate = 1.14;
+      utterance.pitch = 1.00;
 
       utterance.onstart = () => {
         setIsSpeaking(true);
@@ -235,6 +256,7 @@ export function VoiceBillingCopilot({
         body: JSON.stringify({
           userSpeech: speechText,
           activeFirm,
+          activeSubject,
           currentFormState,
           companies,
           recentInvoices,
@@ -247,6 +269,11 @@ export function VoiceBillingCopilot({
       if (!res.ok || data.error) {
         const fallbackSpeech = data.spokenResponse || data.error || 'Server processing error';
         throw new Error(fallbackSpeech);
+      }
+
+      // Track active conversational subject across queries
+      if (data.activeSubject && (data.activeSubject.companyName || data.activeSubject.billNo)) {
+        setActiveSubject(data.activeSubject);
       }
 
       const assistantMsg: Message = {
@@ -297,7 +324,7 @@ export function VoiceBillingCopilot({
       setIsProcessing(false);
       setTranscript('');
     }
-  }, [activeFirm, currentFormState, companies, recentInvoices, messages, onExecuteAction, speakResponse]);
+  }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, messages, onExecuteAction, speakResponse]);
 
   // Start Voice Recognition
   const startListening = useCallback(() => {
@@ -390,6 +417,20 @@ export function VoiceBillingCopilot({
     }
   }, [handleProcessSpeech, toast]);
 
+  const stopSpeaking = useCallback(() => {
+    if (synthRef.current) {
+      try { synthRef.current.cancel(); } catch (e) {}
+    }
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    // Resume listening immediately so user can give next command without waiting
+    if (isHandsFreeRef.current) {
+      setTimeout(() => {
+        startListening();
+      }, 250);
+    }
+  }, [startListening]);
+
   const stopListening = useCallback(() => {
     setIsHandsFree(false);
     isHandsFreeRef.current = false;
@@ -400,6 +441,10 @@ export function VoiceBillingCopilot({
   }, []);
 
   const toggleListening = () => {
+    if (isSpeaking) {
+      stopSpeaking();
+      return;
+    }
     if (isListening) {
       stopListening();
     } else {
@@ -413,17 +458,18 @@ export function VoiceBillingCopilot({
     <div className="fixed bottom-5 right-5 z-[200] flex flex-col items-end gap-3 select-none">
       {/* Floating Active Dialogue Window */}
       {isOpen && (
-        <Card className="w-[340px] sm:w-[410px] shadow-2xl rounded-3xl border-primary/20 backdrop-blur-xl bg-card/95 overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <Card className="w-[340px] sm:w-[415px] shadow-2xl rounded-3xl border-primary/20 backdrop-blur-xl bg-card/95 overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-300">
           <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-3.5 border-b flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="relative">
-                <div className={cn("h-8 w-8 rounded-full flex items-center justify-center font-bold", isListening ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-foreground")}>
+                <div className={cn("h-8 w-8 rounded-full flex items-center justify-center font-bold transition-colors", 
+                  isListening ? "bg-emerald-600 text-white" : isSpeaking ? "bg-primary text-primary-foreground animate-pulse" : "bg-primary text-primary-foreground")}>
                   <Sparkles className="h-4 w-4" />
                 </div>
                 {isListening && (
                   <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                   </span>
                 )}
               </div>
@@ -436,18 +482,31 @@ export function VoiceBillingCopilot({
                 </h4>
                 <div className="flex items-center gap-2 text-[10px] font-medium">
                   {isListening ? (
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                    <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
-                      Listening hands-free... (Boliye sir)
-                    </span>
+                      <span>Sun rahi hoon...</span>
+                      {/* Audio frequency soundwave visualizer */}
+                      <div className="flex items-end gap-0.5 h-3 ml-1">
+                        <span className="w-0.5 bg-emerald-500 rounded-full animate-[pulse_0.4s_ease-in-out_infinite] h-2" />
+                        <span className="w-0.5 bg-emerald-500 rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-3" />
+                        <span className="w-0.5 bg-emerald-500 rounded-full animate-[pulse_0.3s_ease-in-out_infinite] h-1.5" />
+                        <span className="w-0.5 bg-emerald-500 rounded-full animate-[pulse_0.5s_ease-in-out_infinite] h-3" />
+                      </div>
+                    </div>
                   ) : isProcessing ? (
                     <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Sara kaam kar rahi hai...
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Sara soch rahi hai...
                     </span>
                   ) : isSpeaking ? (
-                    <span className="text-primary font-bold flex items-center gap-1">
-                      <Volume2 className="h-2.5 w-2.5 animate-bounce" /> Sara bol rahi hai...
-                    </span>
+                    <div className="flex items-center gap-1 text-primary font-bold">
+                      <Volume2 className="h-2.5 w-2.5 animate-bounce" />
+                      <span>Sara bol rahi hai...</span>
+                      <div className="flex items-end gap-0.5 h-3 ml-1">
+                        <span className="w-0.5 bg-primary rounded-full animate-[pulse_0.4s_ease-in-out_infinite] h-2" />
+                        <span className="w-0.5 bg-primary rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-3" />
+                        <span className="w-0.5 bg-primary rounded-full animate-[pulse_0.3s_ease-in-out_infinite] h-1.5" />
+                      </div>
+                    </div>
                   ) : (
                     <span className="text-muted-foreground">Mic on karke hands-free bolein</span>
                   )}
@@ -456,6 +515,20 @@ export function VoiceBillingCopilot({
             </div>
 
             <div className="flex items-center gap-1">
+              {/* Instant Interrupt Button when Sara is speaking */}
+              {isSpeaking && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 px-2 text-[10px] rounded-lg gap-1 font-bold animate-pulse cursor-pointer shadow-sm"
+                  onClick={stopSpeaking}
+                  title="Click to interrupt Sara immediately"
+                >
+                  <span className="h-2 w-2 rounded-xs bg-white" />
+                  <span>Ruko / Stop</span>
+                </Button>
+              )}
+
               {/* Hands-free mode toggle button */}
               <Button
                 variant={isHandsFree ? "secondary" : "ghost"}
@@ -493,6 +566,26 @@ export function VoiceBillingCopilot({
             </div>
           </div>
 
+          {/* Active Conversational Subject Banner */}
+          {activeSubject && (activeSubject.companyName || activeSubject.billNo) && (
+            <div className="px-3.5 py-1.5 bg-blue-500/10 dark:bg-blue-950/40 border-b border-blue-500/20 flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5 font-bold text-blue-600 dark:text-blue-400 truncate">
+                <span>🎯 In Context:</span>
+                <span className="truncate font-semibold">
+                  {activeSubject.companyName || 'Company'}{activeSubject.billNo ? ` (Bill #${activeSubject.billNo})` : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSubject(null)}
+                className="text-[9px] text-muted-foreground hover:text-foreground cursor-pointer underline ml-2 shrink-0 font-medium"
+                title="Clear conversational memory"
+              >
+                Reset
+              </button>
+            </div>
+          )}
+
           {/* Conversation Transcript Area */}
           <div ref={chatScrollRef} className="p-3.5 max-h-[260px] overflow-y-auto space-y-2.5 text-xs">
             {messages.map((m, idx) => (
@@ -514,8 +607,9 @@ export function VoiceBillingCopilot({
 
             {/* Live user transcript indicator while speaking */}
             {transcript && (
-              <div className="ml-auto bg-primary/20 text-foreground border border-primary/30 p-2.5 rounded-2xl rounded-br-xs max-w-[85%] text-xs italic animate-pulse">
-                "{transcript}..."
+              <div className="ml-auto bg-emerald-500/15 text-foreground border border-emerald-500/30 p-2.5 rounded-2xl rounded-br-xs max-w-[85%] text-xs italic flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+                <span>"{transcript}..."</span>
               </div>
             )}
 
@@ -530,10 +624,11 @@ export function VoiceBillingCopilot({
           {/* Quick Voice Prompt Suggestions */}
           <div className="p-2.5 bg-muted/20 border-t flex flex-wrap gap-1.5">
             {[
-              "JSW ka bill duplicate karo",
-              "Bill 1544 duplicate karo",
-              "Isme OT add karo 10 hrs 500 rate",
-              "Date kal ki kardo",
+              "Metropolitan ka without GST amount?",
+              "Uska after GST amount kitna hua?",
+              "26 din ke hisab se 2 din absent calculate karo",
+              "Transportation 2 trips @ 5000 add karo",
+              "Isme se blank row remove karo",
               "Bill save kardo"
             ].map((tip, i) => (
               <button
@@ -552,6 +647,20 @@ export function VoiceBillingCopilot({
 
       {/* Main Floating Voice Mic Button with glowing pulse */}
       <div className="flex items-center gap-2">
+        {/* If Sara is speaking, show instant interrupt button */}
+        {isSpeaking && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={stopSpeaking}
+            className="h-10 px-3.5 rounded-2xl shadow-xl bg-destructive hover:bg-destructive/90 text-destructive-foreground text-xs font-black gap-1.5 animate-bounce cursor-pointer"
+            title="Sara ko turant chup karayein aur bolein"
+          >
+            <VolumeX className="h-4 w-4" />
+            <span>Ruko (Stop)</span>
+          </Button>
+        )}
+
         {!isOpen && (
           <Button
             variant="outline"
@@ -561,6 +670,11 @@ export function VoiceBillingCopilot({
           >
             <Sparkles className="h-4 w-4 text-pink-500 animate-pulse" />
             <span>Sara Assistant</span>
+            {activeSubject?.companyName && (
+              <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold text-blue-600 dark:text-blue-400 border-blue-500/40">
+                {activeSubject.companyName.slice(0, 10)}...
+              </Badge>
+            )}
             <Badge variant="secondary" className="text-[9px] py-0 px-1 font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">Hands-free</Badge>
           </Button>
         )}
@@ -571,23 +685,27 @@ export function VoiceBillingCopilot({
           className={cn(
             "relative h-14 w-14 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 active:scale-95 cursor-pointer",
             isListening
-              ? "bg-red-600 text-white shadow-red-500/50 scale-105"
+              ? "bg-emerald-600 text-white shadow-emerald-500/50 scale-105"
+              : isSpeaking
+              ? "bg-primary text-primary-foreground shadow-primary/50"
               : isProcessing
               ? "bg-amber-500 text-white shadow-amber-500/50 animate-bounce"
               : "bg-primary text-primary-foreground shadow-primary/40 hover:scale-105"
           )}
-          title={isListening ? "Listening... (Click to stop)" : "Click to speak hands-free with Sara"}
+          title={isSpeaking ? "Click to stop Sara speaking" : isListening ? "Listening... (Click to pause)" : "Click to speak hands-free with Sara"}
         >
           {/* Pulsating glowing rings when listening */}
           {isListening && (
             <>
-              <span className="absolute -inset-1 rounded-full bg-red-500 opacity-40 animate-ping"></span>
-              <span className="absolute -inset-3 rounded-full border-2 border-red-500/60 animate-pulse"></span>
+              <span className="absolute -inset-1 rounded-full bg-emerald-500 opacity-40 animate-ping"></span>
+              <span className="absolute -inset-3 rounded-full border-2 border-emerald-500/60 animate-pulse"></span>
             </>
           )}
 
           {isProcessing ? (
             <Loader2 className="h-6 w-6 animate-spin" />
+          ) : isSpeaking ? (
+            <Volume2 className="h-6 w-6 animate-bounce" />
           ) : isListening ? (
             <Mic className="h-6 w-6 animate-pulse" />
           ) : (
