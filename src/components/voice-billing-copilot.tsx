@@ -74,7 +74,7 @@ export function VoiceBillingCopilot({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      text: `Namaste! Main aapka Voice Billing Assistant hoon. Aap bol kar bill duplicate, naya item (jaise OT, Diesel) add, ya rate badal sakte hain.`,
+      text: `Namaste sir! Main Sara hoon. Aap mujhse friendly baat kar sakte hain (jaise "Hey Sara, kaise ho?"), koi bhi bill ki details pooch sakte hain, ya bol kar duplicate aur edit karwa sakte hain.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -316,13 +316,13 @@ export function VoiceBillingCopilot({
               </div>
               <div>
                 <h4 className="text-xs font-black tracking-tight flex items-center gap-1.5">
-                  Voice Billing Copilot
-                  <Badge variant="outline" className="text-[9px] py-0 px-1.5 font-bold uppercase border-primary/30 text-primary">
-                    AI Live
+                  Sara • AI Assistant
+                  <Badge variant="outline" className="text-[9px] py-0 px-1.5 font-bold uppercase border-pink-400/40 bg-pink-500/10 text-pink-600 dark:text-pink-400">
+                    Live
                   </Badge>
                 </h4>
                 <p className="text-[10px] text-muted-foreground font-medium">
-                  {isListening ? 'Suniye jaa raha hai (Listening...)' : isProcessing ? 'Processing command...' : isSpeaking ? 'Speaking...' : 'Ready for voice'}
+                  {isListening ? 'Sara sun rahi hai (Listening...)' : isProcessing ? 'Sara soch rahi hai...' : isSpeaking ? 'Sara bol rahi hai...' : 'Hey Sara bol kar baat karein'}
                 </p>
               </div>
             </div>
@@ -377,7 +377,7 @@ export function VoiceBillingCopilot({
             {isProcessing && (
               <div className="mr-auto flex items-center gap-2 text-muted-foreground text-[11px] p-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                <span>Computer action execute kar raha hai...</span>
+                <span>Sara action execute kar rahi hai...</span>
               </div>
             )}
           </div>
@@ -385,10 +385,11 @@ export function VoiceBillingCopilot({
           {/* Quick Voice Prompt Suggestions */}
           <div className="p-2.5 bg-muted/20 border-t flex flex-wrap gap-1.5">
             {[
+              "Hey Sara, kaise ho?",
+              "Sara, JSW ka last bill kab tha?",
               "JSW ka bill duplicate karo",
               "OT item add karo ₹5000",
-              "Date 15 Oct kardo",
-              "Advance ₹10,000 daalo"
+              "Is bill ka total kitna hua?"
             ].map((tip, i) => (
               <button
                 key={i}
@@ -413,8 +414,8 @@ export function VoiceBillingCopilot({
             onClick={() => setIsOpen(true)}
             className="h-9 px-3 rounded-2xl shadow-lg border-primary/20 bg-background/90 backdrop-blur-md text-xs font-bold gap-1.5 hover:bg-primary/5 cursor-pointer"
           >
-            <MessageSquare className="h-3.5 w-3.5 text-primary" />
-            <span>Voice Assistant</span>
+            <Sparkles className="h-3.5 w-3.5 text-pink-500 animate-pulse" />
+            <span>Sara Assistant</span>
           </Button>
         )}
 
