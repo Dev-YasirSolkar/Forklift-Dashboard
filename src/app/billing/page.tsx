@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { VoiceBillingCopilot, type VoiceAction } from '@/components/voice-billing-copilot';
 
 
 const AutoHeightTextarea = React.memo(forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>((props, ref) => {
@@ -1209,6 +1210,141 @@ export default function BillingPage() {
     setInvoiceToDelete(null);
   };
   
+  const handleVoiceAction = useCallback((action: VoiceAction) => {
+    switch (action.type) {
+      case 'OPEN_NEW_FORM': {
+        openFormDialog(null);
+        if (action.companyId) {
+          setCompanyId(action.companyId);
+        }
+        break;
+      }
+      case 'DUPLICATE_INVOICE': {
+        let matchedInvoice: Invoice | undefined;
+        if (action.invoiceId) {
+          matchedInvoice = allInvoices?.find(inv => inv.id === action.invoiceId);
+        }
+        if (!matchedInvoice && action.companyId) {
+          matchedInvoice = allInvoices
+            ?.filter(inv => inv.companyId === action.companyId)
+            .sort((a, b) => (b.billDate || '').localeCompare(a.billDate || ''))[0];
+        }
+        if (matchedInvoice) {
+          setEditingInvoice(null);
+          setFormEnterprise(matchedInvoice.enterprise);
+          setCompanyId(matchedInvoice.companyId);
+          const targetDate = action.newBillDate || format(new Date(), 'yyyy-MM-dd');
+          setBillDate(targetDate);
+          try {
+            setBillingMonth(format(parseISO(targetDate), 'yyyy-MM'));
+          } catch (e) {
+            setBillingMonth(format(new Date(), 'yyyy-MM'));
+          }
+          setPoNumber(matchedInvoice.poNumber || 'AGREEMENT');
+          setSite(matchedInvoice.site || '');
+          setItems(matchedInvoice.items.map((it, idx) => ({ ...it, key: `item-${Date.now()}-${idx}` })));
+          setSelectedBankAccountId(matchedInvoice.selectedBankAccount?.id || 'no_bank');
+          setDiscount(String(matchedInvoice.discount || ''));
+          setDiscountType(matchedInvoice.discountType || 'after_gst');
+          setAdvanceReceived(String(matchedInvoice.advanceReceived || ''));
+          setTdsPercentage(String(matchedInvoice.tdsPercentage || ''));
+          setBillNoOverride(null);
+          setIsFormDialogOpen(true);
+          toast({
+            title: "Voice: Bill Duplicated",
+            description: `Duplicated Bill #${matchedInvoice.billNo} for ${matchedInvoice.clientCompanyDetails?.name || 'Company'}.`
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Not Found",
+            description: "Pichla bill nahi mila duplicate karne ke liye."
+          });
+        }
+        break;
+      }
+      case 'SET_FIELD': {
+        if (!action.field) return;
+        if (action.field === 'companyId') setCompanyId(String(action.value));
+        if (action.field === 'billDate') {
+          const val = String(action.value);
+          setBillDate(val);
+          try {
+            setBillingMonth(format(parseISO(val), 'yyyy-MM'));
+          } catch (e) {}
+        }
+        if (action.field === 'billingMonth') setBillingMonth(String(action.value));
+        if (action.field === 'poNumber') setPoNumber(String(action.value));
+        if (action.field === 'site') setSite(String(action.value));
+        if (action.field === 'discount') setDiscount(String(action.value));
+        if (action.field === 'advanceReceived') setAdvanceReceived(String(action.value));
+        if (action.field === 'tdsPercentage') setTdsPercentage(String(action.value));
+        if (action.field === 'enterprise' || action.field === 'formEnterprise') {
+          setFormEnterprise(action.value as Enterprise);
+        }
+        break;
+      }
+      case 'ADD_LINE_ITEM': {
+        if (!isFormDialogOpen) {
+          setIsFormDialogOpen(true);
+        }
+        setItems(prev => [
+          ...prev,
+          {
+            key: `item-${Date.now()}-${Math.random()}`,
+            particulars: action.particulars || '',
+            rate: action.rate !== undefined ? String(action.rate) : '',
+            amount: typeof action.amount === 'number' ? action.amount : 0
+          }
+        ]);
+        toast({
+          title: "Voice: Item Added",
+          description: action.particulars ? `Added: ${action.particulars}` : "New line item added."
+        });
+        break;
+      }
+      case 'UPDATE_LINE_ITEM': {
+        setItems(prev => {
+          const copy = [...prev];
+          const idx = action.index !== undefined && action.index < copy.length ? action.index : copy.length - 1;
+          if (copy[idx]) {
+            copy[idx] = {
+              ...copy[idx],
+              particulars: action.particulars !== undefined ? action.particulars : copy[idx].particulars,
+              rate: action.rate !== undefined ? String(action.rate) : copy[idx].rate,
+              amount: action.amount !== undefined ? Number(action.amount) : copy[idx].amount,
+            };
+          }
+          return copy;
+        });
+        toast({
+          title: "Voice: Item Updated",
+          description: `Line item #${(action.index ?? 0) + 1} updated.`
+        });
+        break;
+      }
+      case 'REMOVE_LINE_ITEM': {
+        setItems(prev => {
+          const idx = action.index !== undefined ? action.index : prev.length - 1;
+          return prev.filter((_, i) => i !== idx);
+        });
+        toast({
+          title: "Voice: Item Removed",
+          description: `Line item removed.`
+        });
+        break;
+      }
+      case 'SAVE_INVOICE': {
+        handleFormSubmit();
+        break;
+      }
+      case 'CLOSE_FORM': {
+        setIsFormDialogOpen(false);
+        break;
+      }
+    }
+  }, [allInvoices, isFormDialogOpen, openFormDialog, handleFormSubmit, toast]);
+
   const handleGlobalSettingsChange = (field: keyof CompanySettings, value: any) => {
     setGlobalPageSettings((prev: any) => ({ ...prev, [field]: value }));
   };
@@ -1892,6 +2028,37 @@ export default function BillingPage() {
             </DialogContent>
         </Dialog>
         
+        {/* Floating AI Voice Billing Copilot */}
+        <VoiceBillingCopilot
+          activeFirm={activeTab}
+          currentFormState={{
+            isOpen: isFormDialogOpen,
+            companyId: companyId,
+            companyName: selectedCompanyForNewInvoice?.name,
+            billDate: billDate,
+            billingMonth: billingMonth,
+            poNumber: poNumber,
+            site: site,
+            items: items.map(it => ({ particulars: it.particulars, rate: String(it.rate || ''), amount: it.amount })),
+            discount: discount,
+            advanceReceived: advanceReceived,
+            tdsPercentage: tdsPercentage,
+            editingInvoiceId: editingInvoice?.id || null,
+          }}
+          companies={companies ? companies.map(c => ({ id: c.id, name: c.name })) : []}
+          recentInvoices={allInvoices ? allInvoices.slice(0, 30).map(inv => ({
+            id: inv.id,
+            billNo: inv.billNo,
+            companyId: inv.companyId,
+            companyName: inv.clientCompanyDetails?.name || 'Company',
+            billDate: inv.billDate,
+            grandTotal: inv.grandTotal,
+            enterprise: inv.enterprise,
+            items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
+          })) : []}
+          onExecuteAction={handleVoiceAction}
+        />
+
       </div>
     </AppLayout>
   );
