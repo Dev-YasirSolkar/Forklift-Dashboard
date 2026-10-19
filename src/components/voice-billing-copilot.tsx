@@ -83,10 +83,17 @@ export function VoiceBillingCopilot({
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize Speech Synthesis
+  // Initialize Speech Synthesis and Preload Female Voices
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       synthRef.current = window.speechSynthesis;
+      // Trigger voice load
+      synthRef.current.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        if (synthRef.current) {
+          synthRef.current.getVoices();
+        }
+      };
     }
   }, []);
 
@@ -97,7 +104,7 @@ export function VoiceBillingCopilot({
     }
   }, [messages, transcript]);
 
-  // Text to Speech Helper
+  // Female Voice Text to Speech Helper for Sara
   const speakResponse = useCallback((text: string, onEnd?: () => void) => {
     if (isMuted || !synthRef.current) {
       if (onEnd) onEnd();
@@ -108,14 +115,46 @@ export function VoiceBillingCopilot({
       synthRef.current.cancel(); // Stop any ongoing speech
       const utterance = new SpeechSynthesisUtterance(text);
       
-      // Look for Hindi or Indian English voices
       const voices = synthRef.current.getVoices();
-      const preferredVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('IN')) || voices[0];
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
+      
+      // Look for Female Voices (Hindi / Indian English / General Female)
+      const femaleVoice = 
+        // 1. Indian Hindi / English Female (Microsoft Heera, Kalpana, Swara, Veena, Sangeeta)
+        voices.find(v => 
+          (v.lang.includes('hi') || v.lang.includes('IN')) &&
+          (
+            v.name.toLowerCase().includes('female') ||
+            v.name.toLowerCase().includes('kalpana') ||
+            v.name.toLowerCase().includes('heera') ||
+            v.name.toLowerCase().includes('swara') ||
+            v.name.toLowerCase().includes('veena') ||
+            v.name.toLowerCase().includes('google')
+          )
+        ) ||
+        // 2. Google Hindi / Natural Hindi voice
+        voices.find(v => v.lang.includes('hi')) ||
+        // 3. Any English Female voice (Zira, Eva, Samantha, Jenny, etc.)
+        voices.find(v => 
+          (
+            v.name.toLowerCase().includes('female') ||
+            v.name.toLowerCase().includes('zira') ||
+            v.name.toLowerCase().includes('eva') ||
+            v.name.toLowerCase().includes('samantha') ||
+            v.name.toLowerCase().includes('jenny') ||
+            v.name.toLowerCase().includes('kavya')
+          )
+        ) ||
+        // 4. Any Indian English
+        voices.find(v => v.lang.includes('en-IN') || v.lang.includes('hi-IN')) ||
+        voices[0];
+
+      if (femaleVoice) {
+        utterance.voice = femaleVoice;
       }
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
+      
+      // Feminine, clear, polite and warm pitch & pacing
+      utterance.rate = 1.0;
+      utterance.pitch = 1.15;
 
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => {
@@ -129,7 +168,7 @@ export function VoiceBillingCopilot({
 
       synthRef.current.speak(utterance);
     } catch (e) {
-      console.warn('TTS error:', e);
+      console.warn('Sara TTS error:', e);
       setIsSpeaking(false);
       if (onEnd) onEnd();
     }

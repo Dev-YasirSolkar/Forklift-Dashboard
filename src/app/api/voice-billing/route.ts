@@ -143,14 +143,22 @@ JSON SCHEMA EXPECTED:
       parts: [{ text: `User Spoken Command: "${userSpeech}"` }]
     });
 
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-    let rawText = '';
-    let success = false;
+    const models = [
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-3.8-flash'
+    ];
+    let parsedResult: any = null;
 
     for (const model of models) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
           method: 'POST',
+          signal: controller.signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -161,33 +169,37 @@ JSON SCHEMA EXPECTED:
             }
           })
         });
+        clearTimeout(timeoutId);
 
         if (res.ok) {
           const data = await res.json();
-          rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
           if (rawText) {
-            success = true;
-            break;
+            const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed && typeof parsed.spokenResponse === 'string') {
+              parsedResult = parsed;
+              break;
+            }
           }
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.warn(`Model ${model} returned ${res.status}:`, errText.slice(0, 120));
         }
-      } catch (err) {
-        console.warn(`Model ${model} failed, trying fallback...`, err);
+      } catch (err: any) {
+        console.warn(`Model ${model} attempt failed:`, err?.message || err);
       }
     }
 
-    if (!success || !rawText) {
+    if (!parsedResult) {
       return NextResponse.json({
-        spokenResponse: "Maaf kijiye, main command samajh nahi paya. Kripya dobara bolein.",
+        spokenResponse: "Maaf kijiye sir, main command theek se samajh nahi payi. Kripya dobara bolein.",
         needsUserResponse: false,
         actions: []
       });
     }
 
-    // Parse JSON safely
-    const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanJson);
-
-    return NextResponse.json(parsed);
+    return NextResponse.json(parsedResult);
 
   } catch (error: any) {
     console.error('Voice billing endpoint error:', error);
