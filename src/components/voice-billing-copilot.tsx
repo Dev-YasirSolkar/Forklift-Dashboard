@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Mic, MicOff, Volume2, VolumeX, Sparkles, Loader2, X, MessageSquare, ChevronUp, ChevronDown, Check } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, Sparkles, Loader2, X, Radio, Check, Headphones } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
@@ -13,6 +13,8 @@ export interface VoiceAction {
   field?: string;
   value?: any;
   invoiceId?: string;
+  billNo?: number | string;
+  billingMonth?: string;
   companyId?: string;
   newBillDate?: string;
   index?: number;
@@ -44,6 +46,7 @@ interface VoiceBillingCopilotProps {
     companyId: string;
     companyName: string;
     billDate: string;
+    billingMonth?: string;
     grandTotal: number;
     enterprise: string;
     items: Array<{ particulars: string; rate?: string; amount: number }>;
@@ -69,12 +72,13 @@ export function VoiceBillingCopilot({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isHandsFree, setIsHandsFree] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      text: `Namaste sir! Main Sara hoon. Aap mujhse friendly baat kar sakte hain (jaise "Hey Sara, kaise ho?"), koi bhi bill ki details pooch sakte hain, ya bol kar duplicate aur edit karwa sakte hain.`,
+      text: `Namaste sir! Main Sara hoon — aapki 10-year senior billing manager. Hands-free dialogue active hai. Aap lagatar bolte rahiye, main system me live kaam karti rahoongi (jaise "JSW ka bill duplicate karo", "Bill 1544 duplicate karo", "OT add karo 10 hrs 500 rate", ya "Save karo").`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -82,12 +86,17 @@ export function VoiceBillingCopilot({
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const isHandsFreeRef = useRef(true);
+  const isSpeakingRef = useRef(false);
 
-  // Initialize Speech Synthesis and Preload Female Voices
+  useEffect(() => {
+    isHandsFreeRef.current = isHandsFree;
+  }, [isHandsFree]);
+
+  // Preload and optimize natural female voice
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       synthRef.current = window.speechSynthesis;
-      // Trigger voice load
       synthRef.current.getVoices();
       window.speechSynthesis.onvoiceschanged = () => {
         if (synthRef.current) {
@@ -104,7 +113,7 @@ export function VoiceBillingCopilot({
     }
   }, [messages, transcript]);
 
-  // Female Voice Text to Speech Helper for Sara
+  // High-Quality Human-Touch Female Voice TTS for Sara
   const speakResponse = useCallback((text: string, onEnd?: () => void) => {
     if (isMuted || !synthRef.current) {
       if (onEnd) onEnd();
@@ -112,69 +121,69 @@ export function VoiceBillingCopilot({
     }
 
     try {
-      synthRef.current.cancel(); // Stop any ongoing speech
+      // Abort ongoing recognition while speaking so microphone doesn't hear itself
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+      }
+
+      synthRef.current.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      
       const voices = synthRef.current.getVoices();
-      
-      // Look for Female Voices (Hindi / Indian English / General Female)
-      const femaleVoice = 
-        // 1. Indian Hindi / English Female (Microsoft Heera, Kalpana, Swara, Veena, Sangeeta)
+
+      // Prioritize natural, fluent, and warm female voices (Hindi / Indian English / Neural)
+      const selectedVoice =
+        // 1. Natural / Online Hindi Female (e.g. Microsoft Swara Online Natural, Google हिन्दी)
         voices.find(v => 
-          (v.lang.includes('hi') || v.lang.includes('IN')) &&
-          (
-            v.name.toLowerCase().includes('female') ||
-            v.name.toLowerCase().includes('kalpana') ||
-            v.name.toLowerCase().includes('heera') ||
-            v.name.toLowerCase().includes('swara') ||
-            v.name.toLowerCase().includes('veena') ||
-            v.name.toLowerCase().includes('google')
-          )
+          (v.name.toLowerCase().includes('swara') || v.name.toLowerCase().includes('kalpana') || v.name.toLowerCase().includes('heera')) &&
+          (v.lang.includes('hi') || v.lang.includes('IN'))
         ) ||
-        // 2. Google Hindi / Natural Hindi voice
+        // 2. Google Hindi Female
+        voices.find(v => v.lang.includes('hi') && (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('google'))) ||
         voices.find(v => v.lang.includes('hi')) ||
-        // 3. Any English Female voice (Zira, Eva, Samantha, Jenny, etc.)
+        // 3. Indian English Female (Neerja, Veena, Kavya)
         voices.find(v => 
-          (
-            v.name.toLowerCase().includes('female') ||
-            v.name.toLowerCase().includes('zira') ||
-            v.name.toLowerCase().includes('eva') ||
-            v.name.toLowerCase().includes('samantha') ||
-            v.name.toLowerCase().includes('jenny') ||
-            v.name.toLowerCase().includes('kavya')
-          )
+          v.lang.includes('IN') && 
+          (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('neerja') || v.name.toLowerCase().includes('veena') || v.name.toLowerCase().includes('kavya'))
         ) ||
-        // 4. Any Indian English
-        voices.find(v => v.lang.includes('en-IN') || v.lang.includes('hi-IN')) ||
+        // 4. English Female (Samantha, Zira, Jenny)
+        voices.find(v => 
+          (v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('jenny')) &&
+          !v.name.toLowerCase().includes('male')
+        ) ||
         voices[0];
 
-      if (femaleVoice) {
-        utterance.voice = femaleVoice;
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
       }
-      
-      // Feminine, clear, polite and warm pitch & pacing
-      utterance.rate = 1.0;
-      utterance.pitch = 1.15;
 
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => {
+      // Crisp, energetic, natural human pace & sweet feminine pitch
+      utterance.rate = 1.10;
+      utterance.pitch = 1.08;
+
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+        isSpeakingRef.current = true;
+      };
+
+      const finishSpeech = () => {
         setIsSpeaking(false);
+        isSpeakingRef.current = false;
         if (onEnd) onEnd();
       };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        if (onEnd) onEnd();
-      };
+
+      utterance.onend = finishSpeech;
+      utterance.onerror = finishSpeech;
 
       synthRef.current.speak(utterance);
     } catch (e) {
       console.warn('Sara TTS error:', e);
       setIsSpeaking(false);
+      isSpeakingRef.current = false;
       if (onEnd) onEnd();
     }
   }, [isMuted]);
 
-  // Send Transcribed Speech to Backend API
+  // Send speech to Backend API and execute automation
   const handleProcessSpeech = useCallback(async (speechText: string) => {
     if (!speechText.trim()) return;
 
@@ -185,6 +194,23 @@ export function VoiceBillingCopilot({
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     setMessages(prev => [...prev, userMsg]);
+
+    // Check if user is asking to pause/stop listening
+    const isStopCommand = /^(stop|bas|pause|khatam|band karo|thank you sara|shukriya|bye)\b/i.test(speechText.trim());
+    if (isStopCommand) {
+      setIsHandsFree(false);
+      isHandsFreeRef.current = false;
+      const pauseReply = "Theek hai sir, main listening pause kar rahi hoon. Jab bhi kaam ho, mic click kijiye ga.";
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: pauseReply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+      setIsProcessing(false);
+      setTranscript('');
+      speakResponse(pauseReply);
+      return;
+    }
 
     try {
       const historyPayload = messages.slice(-6).map(m => ({
@@ -214,26 +240,28 @@ export function VoiceBillingCopilot({
 
       const assistantMsg: Message = {
         role: 'assistant',
-        text: data.spokenResponse || 'Maine updates kar diye hain.',
+        text: data.spokenResponse || 'Updates kar diye hain sir.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, assistantMsg]);
 
-      // Execute actions step-by-step
+      // Execute actions step-by-step with visual satisfaction
       if (Array.isArray(data.actions) && data.actions.length > 0) {
         for (let i = 0; i < data.actions.length; i++) {
           const action = data.actions[i];
           onExecuteAction(action);
-          // slight delay between actions for visual satisfaction
           await new Promise(r => setTimeout(r, 120));
         }
       }
 
       // Speak back the response
       speakResponse(data.spokenResponse, () => {
-        // If Gemini asked a clarification question, auto-start listening again!
-        if (data.needsUserResponse) {
-          startListening();
+        // Continuous Hands-Free Dialogue Loop:
+        // Automatically restart listening after Sara finishes speaking!
+        if (isHandsFreeRef.current) {
+          setTimeout(() => {
+            startListening();
+          }, 350);
         }
       });
 
@@ -241,13 +269,19 @@ export function VoiceBillingCopilot({
       console.error('Voice Processing Failed:', error);
       const errMsg = error?.message && error.message !== 'Server processing error'
         ? error.message
-        : "Sara abhi server se connect nahi ho pa rahi hai. Kripya dobara try karein.";
+        : "Sara abhi connect nahi ho pa rahi hai. Kripya dobara try karein.";
       setMessages(prev => [...prev, {
         role: 'assistant',
         text: errMsg,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
-      speakResponse(errMsg);
+      speakResponse(errMsg, () => {
+        if (isHandsFreeRef.current) {
+          setTimeout(() => {
+            startListening();
+          }, 400);
+        }
+      });
     } finally {
       setIsProcessing(false);
       setTranscript('');
@@ -257,6 +291,9 @@ export function VoiceBillingCopilot({
   // Start Voice Recognition
   const startListening = useCallback(() => {
     if (typeof window === 'undefined') return;
+
+    // Do not start if Sara is actively speaking
+    if (isSpeakingRef.current) return;
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -272,11 +309,11 @@ export function VoiceBillingCopilot({
       if (synthRef.current) synthRef.current.cancel();
 
       if (recognitionRef.current) {
-        recognitionRef.current.abort();
+        try { recognitionRef.current.abort(); } catch (e) {}
       }
 
       const recognition = new SpeechRecognition();
-      recognition.lang = 'hi-IN'; // Also understands Hinglish & English
+      recognition.lang = 'hi-IN'; // Robust Hinglish, Hindi & English
       recognition.continuous = false;
       recognition.interimResults = true;
 
@@ -294,7 +331,19 @@ export function VoiceBillingCopilot({
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Speech recognition error:', event.error);
+        console.warn('Speech recognition status:', event.error);
+        if (event.error === 'no-speech') {
+          // If silence detected in hands-free mode, restart listen loop cleanly
+          setIsListening(false);
+          if (isHandsFreeRef.current && !isSpeakingRef.current) {
+            setTimeout(() => {
+              if (isHandsFreeRef.current && !isSpeakingRef.current) {
+                try { recognition.start(); } catch (e) {}
+              }
+            }, 600);
+          }
+          return;
+        }
         setIsListening(false);
         if (event.error === 'not-allowed') {
           toast({
@@ -310,6 +359,13 @@ export function VoiceBillingCopilot({
         setTranscript(finalText => {
           if (finalText && finalText.trim().length > 1) {
             handleProcessSpeech(finalText);
+          } else if (isHandsFreeRef.current && !isSpeakingRef.current) {
+            // Re-arm listening if hands-free is active and no speech was finalized
+            setTimeout(() => {
+              if (isHandsFreeRef.current && !isSpeakingRef.current) {
+                try { recognition.start(); } catch (e) {}
+              }
+            }, 500);
           }
           return '';
         });
@@ -324,8 +380,10 @@ export function VoiceBillingCopilot({
   }, [handleProcessSpeech, toast]);
 
   const stopListening = useCallback(() => {
+    setIsHandsFree(false);
+    isHandsFreeRef.current = false;
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try { recognitionRef.current.abort(); } catch (e) {}
       setIsListening(false);
     }
   }, []);
@@ -334,6 +392,8 @@ export function VoiceBillingCopilot({
     if (isListening) {
       stopListening();
     } else {
+      setIsHandsFree(true);
+      isHandsFreeRef.current = true;
       startListening();
     }
   };
@@ -342,7 +402,7 @@ export function VoiceBillingCopilot({
     <div className="fixed bottom-5 right-5 z-[200] flex flex-col items-end gap-3 select-none">
       {/* Floating Active Dialogue Window */}
       {isOpen && (
-        <Card className="w-[340px] sm:w-[400px] shadow-2xl rounded-3xl border-primary/20 backdrop-blur-xl bg-card/95 overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <Card className="w-[340px] sm:w-[410px] shadow-2xl rounded-3xl border-primary/20 backdrop-blur-xl bg-card/95 overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-300">
           <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-3.5 border-b flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="relative">
@@ -358,18 +418,50 @@ export function VoiceBillingCopilot({
               </div>
               <div>
                 <h4 className="text-xs font-black tracking-tight flex items-center gap-1.5">
-                  Sara • AI Assistant
+                  Sara • 10-Yr Billing Head
                   <Badge variant="outline" className="text-[9px] py-0 px-1.5 font-bold uppercase border-pink-400/40 bg-pink-500/10 text-pink-600 dark:text-pink-400">
-                    Live
+                    AI Copilot
                   </Badge>
                 </h4>
-                <p className="text-[10px] text-muted-foreground font-medium">
-                  {isListening ? 'Sara sun rahi hai (Listening...)' : isProcessing ? 'Sara soch rahi hai...' : isSpeaking ? 'Sara bol rahi hai...' : 'Hey Sara bol kar baat karein'}
-                </p>
+                <div className="flex items-center gap-2 text-[10px] font-medium">
+                  {isListening ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                      Listening hands-free... (Boliye sir)
+                    </span>
+                  ) : isProcessing ? (
+                    <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Sara kaam kar rahi hai...
+                    </span>
+                  ) : isSpeaking ? (
+                    <span className="text-primary font-bold flex items-center gap-1">
+                      <Volume2 className="h-2.5 w-2.5 animate-bounce" /> Sara bol rahi hai...
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Mic on karke hands-free bolein</span>
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="flex items-center gap-1">
+              {/* Hands-free mode toggle button */}
+              <Button
+                variant={isHandsFree ? "secondary" : "ghost"}
+                size="sm"
+                className={cn("h-7 px-2 text-[10px] rounded-lg gap-1 font-bold", isHandsFree ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30" : "text-muted-foreground")}
+                onClick={() => {
+                  const next = !isHandsFree;
+                  setIsHandsFree(next);
+                  isHandsFreeRef.current = next;
+                  if (next && !isListening) startListening();
+                }}
+                title={isHandsFree ? "Hands-Free Dialogue is ON (Auto-listens after Sara speaks)" : "Click to enable hands-free auto dialogue"}
+              >
+                <Headphones className="h-3 w-3" />
+                <span>{isHandsFree ? "Auto" : "Manual"}</span>
+              </Button>
+
               <Button
                 variant="ghost"
                 size="icon"
@@ -396,10 +488,10 @@ export function VoiceBillingCopilot({
               <div
                 key={idx}
                 className={cn(
-                  "p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed space-y-1",
+                  "p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed space-y-1 shadow-xs",
                   m.role === 'user'
-                    ? "ml-auto bg-primary text-primary-foreground font-semibold rounded-br-xs"
-                    : "mr-auto bg-muted/60 text-foreground border rounded-bl-xs"
+                    ? "ml-auto bg-primary text-primary-foreground font-medium rounded-br-xs"
+                    : "mr-auto bg-muted/70 text-foreground border border-border/40 rounded-bl-xs"
                 )}
               >
                 <p>{m.text}</p>
@@ -417,9 +509,9 @@ export function VoiceBillingCopilot({
             )}
 
             {isProcessing && (
-              <div className="mr-auto flex items-center gap-2 text-muted-foreground text-[11px] p-2">
+              <div className="mr-auto flex items-center gap-2 text-muted-foreground text-[11px] p-2 bg-muted/40 rounded-xl border border-border/30">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                <span>Sara action execute kar rahi hai...</span>
+                <span className="font-semibold text-primary">Sara processing command & screen update...</span>
               </div>
             )}
           </div>
@@ -427,17 +519,17 @@ export function VoiceBillingCopilot({
           {/* Quick Voice Prompt Suggestions */}
           <div className="p-2.5 bg-muted/20 border-t flex flex-wrap gap-1.5">
             {[
-              "Hey Sara, kaise ho?",
-              "Sara, JSW ka last bill kab tha?",
               "JSW ka bill duplicate karo",
-              "OT item add karo ₹5000",
-              "Is bill ka total kitna hua?"
+              "Bill 1544 duplicate karo",
+              "Isme OT add karo 10 hrs 500 rate",
+              "Date kal ki kardo",
+              "Bill save kardo"
             ].map((tip, i) => (
               <button
                 key={i}
                 type="button"
                 onClick={() => handleProcessSpeech(tip)}
-                disabled={isProcessing || isListening}
+                disabled={isProcessing}
                 className="text-[9px] font-bold px-2 py-1 rounded-lg bg-background hover:bg-primary/10 hover:text-primary border border-border/40 transition-colors text-muted-foreground cursor-pointer disabled:opacity-50"
               >
                 ⚡ "{tip}"
@@ -453,11 +545,12 @@ export function VoiceBillingCopilot({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setIsOpen(true)}
-            className="h-9 px-3 rounded-2xl shadow-lg border-primary/20 bg-background/90 backdrop-blur-md text-xs font-bold gap-1.5 hover:bg-primary/5 cursor-pointer"
+            onClick={() => { setIsOpen(true); if (!isListening) { setIsHandsFree(true); isHandsFreeRef.current = true; startListening(); } }}
+            className="h-10 px-3.5 rounded-2xl shadow-xl border-primary/30 bg-background/95 backdrop-blur-md text-xs font-black gap-2 hover:bg-primary/10 cursor-pointer"
           >
-            <Sparkles className="h-3.5 w-3.5 text-pink-500 animate-pulse" />
+            <Sparkles className="h-4 w-4 text-pink-500 animate-pulse" />
             <span>Sara Assistant</span>
+            <Badge variant="secondary" className="text-[9px] py-0 px-1 font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">Hands-free</Badge>
           </Button>
         )}
 
@@ -472,7 +565,7 @@ export function VoiceBillingCopilot({
               ? "bg-amber-500 text-white shadow-amber-500/50 animate-bounce"
               : "bg-primary text-primary-foreground shadow-primary/40 hover:scale-105"
           )}
-          title={isListening ? "Listening... (Click to stop)" : "Click to speak"}
+          title={isListening ? "Listening... (Click to stop)" : "Click to speak hands-free with Sara"}
         >
           {/* Pulsating glowing rings when listening */}
           {isListening && (

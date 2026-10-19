@@ -1221,14 +1221,48 @@ export default function BillingPage() {
       }
       case 'DUPLICATE_INVOICE': {
         let matchedInvoice: Invoice | undefined;
+
+        // 1. By exact ID
         if (action.invoiceId) {
           matchedInvoice = allInvoices?.find(inv => inv.id === action.invoiceId);
         }
+
+        // 2. By Bill Number (e.g. 1571, 1544, 838)
+        if (!matchedInvoice && action.billNo !== undefined && action.billNo !== null) {
+          const rawNum = typeof action.billNo === 'number' ? action.billNo : parseInt(String(action.billNo).replace(/\D/g, ''), 10);
+          if (!isNaN(rawNum)) {
+            matchedInvoice = allInvoices?.find(inv => inv.billNo === rawNum);
+          }
+        }
+
+        // 3. By Company + Billing Month (e.g. JSW in 2026-09 or August)
+        if (!matchedInvoice && action.companyId && action.billingMonth) {
+          const targetMonth = String(action.billingMonth);
+          matchedInvoice = allInvoices?.find(inv => 
+            inv.companyId === action.companyId && 
+            (inv.billingMonth === targetMonth || (Boolean(inv.billDate) && String(inv.billDate).startsWith(targetMonth)))
+          );
+        }
+
+        // 4. By Company (Latest Invoice)
         if (!matchedInvoice && action.companyId) {
           matchedInvoice = allInvoices
             ?.filter(inv => inv.companyId === action.companyId)
             .sort((a, b) => (b.billDate || '').localeCompare(a.billDate || ''))[0];
         }
+
+        // 5. If form is already open, clone currently opened invoice
+        if (!matchedInvoice && editingInvoice) {
+          matchedInvoice = editingInvoice;
+        }
+
+        // 6. Fallback to latest invoice in current firm
+        if (!matchedInvoice && allInvoices && allInvoices.length > 0) {
+          matchedInvoice = allInvoices
+            .filter(inv => inv.enterprise === activeTab)
+            .sort((a, b) => (b.billDate || '').localeCompare(a.billDate || ''))[0] || allInvoices[0];
+        }
+
         if (matchedInvoice) {
           setEditingInvoice(null);
           setFormEnterprise(matchedInvoice.enterprise);
@@ -1236,7 +1270,7 @@ export default function BillingPage() {
           const targetDate = action.newBillDate || format(new Date(), 'yyyy-MM-dd');
           setBillDate(targetDate);
           try {
-            setBillingMonth(format(parseISO(targetDate), 'yyyy-MM'));
+            setBillingMonth(action.billingMonth || format(parseISO(targetDate), 'yyyy-MM'));
           } catch (e) {
             setBillingMonth(format(new Date(), 'yyyy-MM'));
           }
@@ -1252,7 +1286,7 @@ export default function BillingPage() {
           setIsFormDialogOpen(true);
           toast({
             title: "Voice: Bill Duplicated",
-            description: `Duplicated Bill #${matchedInvoice.billNo} for ${matchedInvoice.clientCompanyDetails?.name || 'Company'}.`
+            description: `Duplicated Bill #${matchedInvoice.billNo} (${matchedInvoice.clientCompanyDetails?.name || 'Company'}).`
           });
         } else {
           toast({
@@ -2046,12 +2080,13 @@ export default function BillingPage() {
             editingInvoiceId: editingInvoice?.id || null,
           }}
           companies={companies ? companies.map(c => ({ id: c.id, name: c.name })) : []}
-          recentInvoices={allInvoices ? allInvoices.slice(0, 30).map(inv => ({
+          recentInvoices={allInvoices ? allInvoices.slice(0, 60).map(inv => ({
             id: inv.id,
             billNo: inv.billNo,
             companyId: inv.companyId,
             companyName: inv.clientCompanyDetails?.name || 'Company',
             billDate: inv.billDate,
+            billingMonth: inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : ''),
             grandTotal: inv.grandTotal,
             enterprise: inv.enterprise,
             items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
