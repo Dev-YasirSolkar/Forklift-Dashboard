@@ -9,9 +9,10 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
 export interface VoiceAction {
-  type: 'OPEN_NEW_FORM' | 'DUPLICATE_INVOICE' | 'SET_FIELD' | 'ADD_LINE_ITEM' | 'UPDATE_LINE_ITEM' | 'REMOVE_LINE_ITEM' | 'SAVE_INVOICE' | 'CLOSE_FORM';
+  type: 'OPEN_NEW_FORM' | 'DUPLICATE_INVOICE' | 'SET_FIELD' | 'ADD_LINE_ITEM' | 'UPDATE_LINE_ITEM' | 'REMOVE_LINE_ITEM' | 'REMOVE_EMPTY_ITEMS' | 'HIGHLIGHT_FIELD' | 'SAVE_INVOICE' | 'CLOSE_FORM';
   field?: string;
   value?: any;
+  target?: string;
   invoiceId?: string;
   billNo?: number | string;
   billingMonth?: string;
@@ -33,7 +34,7 @@ interface VoiceBillingCopilotProps {
     billingMonth?: string;
     poNumber?: string;
     site?: string;
-    items?: Array<{ particulars: string; rate?: string; amount: number }>;
+    items?: Array<{ index?: number; particulars: string; rate?: string; amount: number; isBlank?: boolean }>;
     discount?: string;
     advanceReceived?: string;
     tdsPercentage?: string;
@@ -48,6 +49,12 @@ interface VoiceBillingCopilotProps {
     billDate: string;
     billingMonth?: string;
     grandTotal: number;
+    subTotal?: number;
+    taxTotal?: number;
+    advanceReceived?: number | string;
+    discount?: number | string;
+    poNumber?: string;
+    site?: string;
     enterprise: string;
     items: Array<{ particulars: string; rate?: string; amount: number }>;
   }>;

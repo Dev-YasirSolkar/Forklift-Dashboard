@@ -561,6 +561,7 @@ export default function BillingPage() {
 
   const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [billNoOverride, setBillNoOverride] = useState<number | null>(null);
+  const [highlightedField, setHighlightedField] = useState<string | null>(null);
   
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [invoiceForPreview, setInvoiceForPreview] = useState<Invoice | null>(null);
@@ -1322,15 +1323,32 @@ export default function BillingPage() {
         if (!isFormDialogOpen) {
           setIsFormDialogOpen(true);
         }
-        setItems(prev => [
-          ...prev,
-          {
-            key: `item-${Date.now()}-${Math.random()}`,
-            particulars: action.particulars || '',
-            rate: action.rate !== undefined ? String(action.rate) : '',
-            amount: typeof action.amount === 'number' ? action.amount : 0
+        setItems(prev => {
+          // If the last item is completely blank and we have new details, fill that blank row instead of making duplicate empty rows!
+          const lastIdx = prev.length - 1;
+          const isLastBlank = lastIdx >= 0 && !prev[lastIdx].particulars.trim() && (!prev[lastIdx].amount || prev[lastIdx].amount === 0);
+          
+          if (isLastBlank && (action.particulars || action.amount)) {
+            const copy = [...prev];
+            copy[lastIdx] = {
+              ...copy[lastIdx],
+              particulars: action.particulars || copy[lastIdx].particulars,
+              rate: action.rate !== undefined ? String(action.rate) : copy[lastIdx].rate,
+              amount: typeof action.amount === 'number' ? action.amount : copy[lastIdx].amount
+            };
+            return copy;
           }
-        ]);
+
+          return [
+            ...prev,
+            {
+              key: `item-${Date.now()}-${Math.random()}`,
+              particulars: action.particulars || '',
+              rate: action.rate !== undefined ? String(action.rate) : '',
+              amount: typeof action.amount === 'number' ? action.amount : 0
+            }
+          ];
+        });
         toast({
           title: "Voice: Item Added",
           description: action.particulars ? `Added: ${action.particulars}` : "New line item added."
@@ -1340,7 +1358,16 @@ export default function BillingPage() {
       case 'UPDATE_LINE_ITEM': {
         setItems(prev => {
           const copy = [...prev];
-          const idx = action.index !== undefined && action.index < copy.length ? action.index : copy.length - 1;
+          let idx = action.index !== undefined && action.index >= 0 && action.index < copy.length 
+            ? action.index 
+            : -1;
+          
+          // If index is not found or not specified, look for the first blank row, else last row
+          if (idx === -1) {
+            const blankIdx = copy.findIndex(it => !it.particulars.trim() && (!it.amount || it.amount === 0));
+            idx = blankIdx !== -1 ? blankIdx : copy.length - 1;
+          }
+
           if (copy[idx]) {
             copy[idx] = {
               ...copy[idx],
@@ -1359,13 +1386,57 @@ export default function BillingPage() {
       }
       case 'REMOVE_LINE_ITEM': {
         setItems(prev => {
-          const idx = action.index !== undefined ? action.index : prev.length - 1;
-          return prev.filter((_, i) => i !== idx);
+          let idxToRemove = action.index;
+          // If no index given, look for an empty row first
+          if (idxToRemove === undefined || idxToRemove === null) {
+            idxToRemove = prev.findIndex(it => !it.particulars.trim() && (!it.amount || it.amount === 0));
+          }
+          if (idxToRemove === -1 || idxToRemove === undefined) {
+            idxToRemove = prev.length - 1;
+          }
+          if (prev.length <= 1) {
+            return [{ key: `item-${Date.now()}`, particulars: '', rate: '', amount: 0 }];
+          }
+          return prev.filter((_, i) => i !== idxToRemove);
         });
         toast({
           title: "Voice: Item Removed",
           description: `Line item removed.`
         });
+        break;
+      }
+      case 'REMOVE_EMPTY_ITEMS': {
+        setItems(prev => {
+          const filtered = prev.filter(it => it.particulars.trim() !== '' || (it.amount && it.amount > 0));
+          return filtered.length > 0 ? filtered : [{ key: `item-${Date.now()}`, particulars: '', rate: '', amount: 0 }];
+        });
+        toast({
+          title: "Voice: Cleaned Blank Rows",
+          description: "Saari blank rows remove kar di gayi hain."
+        });
+        break;
+      }
+      case 'HIGHLIGHT_FIELD': {
+        const target = action.target || (action.index !== undefined ? `item-${action.index}` : action.field);
+        if (target) {
+          setHighlightedField(target);
+          setTimeout(() => {
+            let el: HTMLElement | null = null;
+            if (action.index !== undefined) {
+              el = document.getElementById(`line-item-row-${action.index}`) || 
+                   document.getElementById(`particulars-${action.index}`);
+            } else {
+              el = document.getElementById(target) || 
+                   document.getElementById(target.toLowerCase());
+            }
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              if (typeof el.focus === 'function') el.focus();
+            }
+          }, 150);
+
+          setTimeout(() => setHighlightedField(null), 8000);
+        }
         break;
       }
       case 'SAVE_INVOICE': {
@@ -1756,40 +1827,56 @@ export default function BillingPage() {
                                     </DropdownMenu>
                                 </div>
                             </div>
-                            {items.map((item) => (
-                                <div key={item.key} className="flex flex-col sm:flex-row items-start sm:items-center gap-2 border sm:border-0 rounded-lg p-2 sm:p-0">
+                            {items.map((item, index) => {
+                                const isRowHighlighted = highlightedField === `item-${index}` || highlightedField === item.key;
+                                return (
+                                <div 
+                                    key={item.key} 
+                                    id={`line-item-row-${index}`}
+                                    className={cn(
+                                        "flex flex-col sm:flex-row items-start sm:items-center gap-2 border sm:border-0 rounded-lg p-2 sm:p-0 transition-all duration-300 relative",
+                                        isRowHighlighted && "ring-2 ring-primary ring-offset-2 bg-primary/10 rounded-xl p-2.5 shadow-md animate-pulse"
+                                    )}
+                                >
+                                    {isRowHighlighted && (
+                                        <div className="absolute -top-3.5 left-2 bg-primary text-primary-foreground text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg z-20 flex items-center gap-1 animate-bounce">
+                                            <span>👉 Sara: Row #{index + 1}</span>
+                                        </div>
+                                    )}
                                     <AutoHeightTextarea
-                                        id={`particulars-${item.key}`}
+                                        id={`particulars-${index}`}
                                         value={item.particulars}
                                         onChange={(e) => handleItemChange(item.key, 'particulars', e.target.value)}
                                         onFocus={() => setActiveInput({ key: item.key, field: 'particulars' })}
                                         placeholder="Item description"
-                                        className="flex-grow resize-none overflow-hidden text-xs sm:text-sm"
+                                        className={cn("flex-grow resize-none overflow-hidden text-xs sm:text-sm", highlightedField === `particulars-${index}` && "ring-2 ring-primary")}
                                         rows={1}
                                     />
                                     <div className="flex items-center gap-2 w-full sm:w-auto">
                                         <AutoHeightTextarea
-                                            id={`rate-${item.key}`}
+                                            id={`rate-${index}`}
                                             value={item.rate || ''}
                                             onChange={(e) => handleItemChange(item.key, 'rate', e.target.value)}
                                             onFocus={() => setActiveInput({ key: item.key, field: 'rate' })}
                                             placeholder="Rate"
-                                            className="w-full sm:w-32 md:w-40 resize-none overflow-hidden text-xs sm:text-sm"
+                                            className={cn("w-full sm:w-32 md:w-40 resize-none overflow-hidden text-xs sm:text-sm", highlightedField === `rate-${index}` && "ring-2 ring-primary")}
                                             rows={1}
                                         />
                                         <Input
+                                            id={`amount-${index}`}
                                             type="text"
                                             placeholder="Amount"
                                             value={item.amount ? new Intl.NumberFormat('en-IN').format(item.amount) : (item.amount === 0 ? '0' : '')}
                                             onChange={(e) => handleItemChange(item.key, 'amount', e.target.value)}
-                                            className="w-full sm:w-32 md:w-48 text-right h-9 text-xs sm:text-sm"
+                                            className={cn("w-full sm:w-32 md:w-48 text-right h-9 text-xs sm:text-sm", highlightedField === `amount-${index}` && "ring-2 ring-primary")}
                                         />
                                         <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.key)} disabled={items.length === 1} className="h-8 w-8">
                                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                         </Button>
                                     </div>
                                 </div>
-                            ))}
+                            );
+                            })}
                             <Button variant="outline" size="sm" onClick={handleAddItem} className="h-8 text-xs">
                                 <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Item
                             </Button>
@@ -2073,14 +2160,20 @@ export default function BillingPage() {
             billingMonth: billingMonth,
             poNumber: poNumber,
             site: site,
-            items: items.map(it => ({ particulars: it.particulars, rate: String(it.rate || ''), amount: it.amount })),
+            items: items.map((it, idx) => ({ 
+              index: idx, 
+              particulars: it.particulars, 
+              rate: String(it.rate || ''), 
+              amount: it.amount,
+              isBlank: !it.particulars.trim() && (!it.amount || it.amount === 0)
+            })),
             discount: discount,
             advanceReceived: advanceReceived,
             tdsPercentage: tdsPercentage,
             editingInvoiceId: editingInvoice?.id || null,
           }}
           companies={companies ? companies.map(c => ({ id: c.id, name: c.name })) : []}
-          recentInvoices={allInvoices ? allInvoices.slice(0, 60).map(inv => ({
+          recentInvoices={allInvoices ? allInvoices.slice(0, 100).map(inv => ({
             id: inv.id,
             billNo: inv.billNo,
             companyId: inv.companyId,
@@ -2088,6 +2181,12 @@ export default function BillingPage() {
             billDate: inv.billDate,
             billingMonth: inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : ''),
             grandTotal: inv.grandTotal,
+            subTotal: inv.netTotal,
+            taxTotal: (inv.cgst || 0) + (inv.sgst || 0),
+            advanceReceived: inv.advanceReceived,
+            discount: inv.discount,
+            poNumber: inv.poNumber,
+            site: inv.site,
             enterprise: inv.enterprise,
             items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
           })) : []}

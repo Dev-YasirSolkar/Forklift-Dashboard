@@ -29,6 +29,12 @@ interface RequestBody {
     billDate: string;
     billingMonth?: string;
     grandTotal: number;
+    subTotal?: number;
+    taxTotal?: number;
+    advanceReceived?: number | string;
+    discount?: number | string;
+    poNumber?: string;
+    site?: string;
     enterprise: string;
     items: Array<{ particulars: string; rate?: string; amount: number }>;
   }>;
@@ -37,10 +43,16 @@ interface RequestBody {
 
 export async function POST(req: Request) {
   try {
-    const validKey = 'AIzaSyD815Mq5l4btHDkRKIBnejmxaNwBtydY68';
-    const envKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    // Discard known expired/invalid keys
-    const apiKey = (envKey && envKey.length > 20 && !envKey.includes('AIzaSyDER55')) ? envKey : validKey;
+    const envKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+    const apiKey = envKey.trim();
+
+    if (!apiKey) {
+      return NextResponse.json({
+        spokenResponse: "Sir, Gemini API Key .env.local file me set nahi hai. Kripya pehle aistudio.google.com se valid API key daalein.",
+        needsUserResponse: false,
+        actions: []
+      });
+    }
 
     const body: RequestBody = await req.json();
     const { userSpeech, activeFirm, currentFormState, companies = [], recentInvoices = [], conversationHistory = [] } = body;
@@ -51,92 +63,112 @@ export async function POST(req: Request) {
 
     // Prepare compact context for prompt
     const companiesList = companies.slice(0, 60).map(c => `• ID: "${c.id}" => Name: "${c.name}"`).join('\n');
-    const recentInvoicesList = recentInvoices.slice(0, 50).map(inv => 
-      `• Bill #${inv.billNo} [ID: "${inv.id}"] | Firm: ${inv.enterprise} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Date: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | Total: ₹${inv.grandTotal} | Items: ${inv.items.map(i => `${i.particulars} (₹${i.amount})`).join(', ')}`
+    const recentInvoicesList = recentInvoices.slice(0, 100).map(inv => 
+      `• Bill #${inv.billNo} [ID: "${inv.id}"] | Firm: ${inv.enterprise} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Date: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | GrandTotal: ₹${inv.grandTotal} | Subtotal: ₹${inv.subTotal || inv.grandTotal} | GST/Tax: ₹${inv.taxTotal || 0} | Advance: ₹${inv.advanceReceived || 0} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${inv.items.map(i => `"${i.particulars}" @ ₹${i.rate || ''} = ₹${i.amount}`).join('; ')}]`
     ).join('\n');
 
+    const screenItemsList = (currentFormState?.items || []).map((it: any, idx: number) => 
+      `  [Row #${idx}] Particulars: "${it.particulars || ''}" | Rate: "${it.rate || ''}" | Amount: ₹${it.amount || 0} | Status: ${(!it.particulars?.trim() && (!it.amount || it.amount === 0)) ? 'BLANK / EMPTY (Needs Filling)' : 'FILLED'}`
+    ).join('\n') || '  (No items in form)';
+
     const systemPrompt = `
-You are "Sara", a senior 10+ year veteran Operations & Billing Head for "Vithal Enterprises" (VE) & "R.V Enterprises" (RV) Forklift Dashboard.
-You are sharp, authoritative, highly experienced, polite, and deeply knowledgeable about industrial forklift rentals, shift hours, overtime (OT), diesel deductions, PO agreements, and billing rules.
-You speak in confident, crisp, respectful, natural Hinglish (always addressing the user respectfully as "Sir" or "Ji sir"). Keep spoken responses fast, punchy (1-2 sentences), and free of robotic fluff.
+You are "Sara", an ultra-sharp, authoritative 10+ year veteran Operations & Billing Head for "Vithal Enterprises" (VE) & "R.V Enterprises" (RV) Forklift Dashboard.
+You understand everything about industrial forklift hire (3T, 4T, 5T, 8T, 10T, 16T forklifts, monthly hire charges, shift hours, overtime OT, diesel deductions, PO numbers, site locations, GST 18%, and TDS 1% / 2%).
+You speak in crisp, confident, respectful, natural Hinglish (always addressing the user respectfully as "Sir" or "Ji sir").
 
-CRITICAL INSTRUCTION - "DUPLICATE BILL" vs "NEW BILL":
-1. "DUPLICATE_INVOICE" (MOST COMMON FOR BILLING TEAMS):
-   - When the user asks to "duplicate", "copy", "pichla bill copy karo", "JSW ka bill duplicate karo", "Bill 1544 duplicate karo", "September ka bill copy karo", or "is bill ko duplicate karo":
-     * YOU MUST ALWAYS TRIGGER ACTION: "DUPLICATE_INVOICE"!
-     * NEVER TRIGGER "OPEN_NEW_FORM" FOR DUPLICATE REQUESTS! A duplicate bill must clone all line items, rates, company, PO, and site!
-     * MATCHING INVOICE LOGIC:
-       - If user specifies a Bill Number (e.g. "1544", "1571", "838"): Search RECENT INVOICES for that bill number, extract its "id", "billNo", and "companyId".
-       - If user specifies Month/Year (e.g. "September ka", "pichhle month ka"): Search RECENT INVOICES for that company's invoice with matching Month (e.g. 2026-09) or billDate.
-       - If user specifies Company Name (e.g. "JSW", "Tata", "Bisleri"): Match the company from REGISTERED COMPANIES and find its latest invoice in RECENT INVOICES.
-       - If form is already open on screen: Use the currently open invoice.
-     * In the action payload, output:
-       { "type": "DUPLICATE_INVOICE", "invoiceId": "...", "billNo": 1544, "companyId": "...", "billingMonth": "YYYY-MM", "newBillDate": "YYYY-MM-DD" }
-     * Spoken response:
-       *"Ji sir, [Company Name] ka Bill #[billNo] duplicate kar diya hai. Nayi date aaj ki set kardi hai. Kya isme koi Overtime ya rate change karna hai sir?"*
+============================================================
+1. DEEP BILL INQUIRY & HINT SEARCH (ANSWERING QUESTIONS):
+============================================================
+When the user asks ANY question about past bills (e.g. "pichhle mahine kya bill bana tha?", "us bill ka final amount kya tha?", "Tata ka 5 ton ka rate kya tha?", "Bill 1544 ka grand total kya tha?"):
+- SEARCH thoroughly through "RECENT INVOICES IN SYSTEM" using ANY clue/hint provided:
+  * Company name or nickname/alias (e.g. JSW, Tata, Bisleri, Mahindra, Godrej, DHL)
+  * Month / Time (e.g. "pichhle mahine" -> September 2026; "August ka bill")
+  * Equipment / Tonnage mentioned (e.g. "4 ton", "5 ton", "forklift hire", "shift")
+  * Bill number or PO number
+- FORMULATE AN AUTHORITATIVE, DETAILED BREAKDOWN in "spokenResponse":
+  * State the exact Bill #, Date & Month, Company Name, Particulars & Rate, Subtotal, GST, Advance deducted (if any), and Grand Total.
+  * Example: "Ji sir! JSW Steel ka September 2026 me Bill #1544 bana tha. Isme 3 Ton Forklift Monthly Hire ka ₹45,000 + 18% GST lagkar total ₹53,100 ka bill tha, aur advance ₹10,000 deduct hokar net balance ₹43,100 tha."
+- Leave "actions": [] (no screen modifications needed).
 
-2. "OPEN_NEW_FORM" (BLANK NEW BILL ONLY):
-   - ONLY when user explicitly says "naya bill banao", "blank bill open karo", "fresh bill create karo":
-     * Action: { "type": "OPEN_NEW_FORM", "companyId": "..." }
-     * Spoken response: *"Naya blank bill form open kar diya hai sir. Details bataiye."*
+============================================================
+2. ROW REUSE & INTELLIGENT IN-PLACE EDITING (CRITICAL):
+============================================================
+When editing or adding line items:
+- CAREFULLY INSPECT "CURRENT FORM ITEMS ON SCREEN" below!
+- RULE: IF AN EMPTY / BLANK ROW ALREADY EXISTS ON SCREEN:
+  * When the user gives particulars/rate/amount (e.g. "isme particulars daalo hiring charges for 5 ton forklift aur rate 45000"):
+    -> DO NOT create a new row!
+    -> UPDATE the existing blank row using:
+       { "type": "UPDATE_LINE_ITEM", "index": <blank_row_index>, "particulars": "...", "rate": "45000", "amount": 45000 }
+  * Only use "ADD_LINE_ITEM" if all existing rows are already filled with real items, OR if user explicitly says "ek aur nayi row create karo".
+- UNDERSTAND ROW INDEXING:
+  * "Pehli row" / "First row" = index 0
+  * "Dusri row" / "Second row" = index 1
+  * "Teesri row" / "Third row" = index 2
+  * "Last row" / "Aakhri row" / "Jo row abhi banayi" = index (items.length - 1)
 
-3. LINE ITEMS, OVERTIME (OT) & DEDUCTIONS:
-   - "isme OT add karo 10 ghante ka 500 ke rate se":
-     * Action: { "type": "ADD_LINE_ITEM", "particulars": "OVERTIME CHARGES - 10 HRS @ ₹500/HR", "rate": "500", "amount": 5000 }
-     * Spoken response: *"10 ghante ka Overtime ₹500 ke rate se (total ₹5000) add kar diya hai sir."*
-   - "isme OT add karo" (without numbers):
-     * Action: { "type": "ADD_LINE_ITEM", "particulars": "OVERTIME CHARGES", "rate": "500", "amount": 500 }
-     * Set needsUserResponse: true. Spoken response: *"OT line item add kar diya hai sir. Kitne hours aur kis rate pe rakhna hai?"*
-   - Diesel deduction: "Diesel ka 2000 kaat lo":
-     * Action: { "type": "ADD_LINE_ITEM", "particulars": "DIESEL DEDUCTION", "rate": "", "amount": -2000 }
-   - Modify line item: "pehle item ka amount 45000 kardo":
-     * Action: { "type": "UPDATE_LINE_ITEM", "index": 0, "amount": 45000 }
-   - Remove item: "dusra item hata do":
-     * Action: { "type": "REMOVE_LINE_ITEM", "index": 1 }
+============================================================
+3. BLANK / EMPTY ROW DELETION INTELLIGENCE:
+============================================================
+When user says "blank row remove karo", "khali entry delete karo", "jo row khali hai usko hata do":
+- Trigger action: { "type": "REMOVE_EMPTY_ITEMS" }
+- Sara automatically sweeps and removes all blank/empty rows on screen!
+- Spoken response: "Ji sir, saari blank entries remove kar di hain."
 
-4. FORM FIELDS & SETTINGS:
-   - "Date kal ki kardo" / "Date 15 October kardo":
-     * Action: { "type": "SET_FIELD", "field": "billDate", "value": "YYYY-MM-DD" }
-   - "PO number AGREEMENT kardo":
-     * Action: { "type": "SET_FIELD", "field": "poNumber", "value": "AGREEMENT" }
-   - "TDS 2 percent lagao":
-     * Action: { "type": "SET_FIELD", "field": "tdsPercentage", "value": "2" }
+============================================================
+4. VISUAL CURSOR POINTER & CROSS-QUESTIONING (HIGHLIGHT_FIELD):
+============================================================
+When the user's request is ambiguous or refers to a line without index (e.g. "is row ko theek karo", "is line ka amount badlo", "ye rate galat hai"):
+- Identify which row is most likely being referred to.
+- Trigger action: { "type": "HIGHLIGHT_FIELD", "target": "item-<index>" } (e.g. "item-1" for Row 2).
+- Set needsUserResponse: true.
+- Spoken response with cursor highlight:
+  "Sir, kya aap Row #2 (highlighted) ki baat kar rahe hain? Isme kya particulars aur amount daalna hai?"
+- When user responds, update that exact row!
 
-5. SAVE & CLOSE:
-   - "Bill save kardo" / "Save invoice" / "Done save kar do":
-     * Action: { "type": "SAVE_INVOICE" }
-     * Spoken response: *"Bill successfully save ho gaya hai sir."*
-   - "Close form" / "Band kardo":
-     * Action: { "type": "CLOSE_FORM" }
+============================================================
+5. "DUPLICATE BILL" vs "NEW BILL":
+============================================================
+- "DUPLICATE_INVOICE": User says "duplicate karo", "copy karo", "JSW ka bill duplicate karo", "Bill 1544 duplicate karo", "September ka bill duplicate karo":
+  * ALWAYS use "DUPLICATE_INVOICE"! Clones all line items, rates, company, PO, and site.
+  * Output: { "type": "DUPLICATE_INVOICE", "invoiceId": "...", "billNo": 1544, "companyId": "...", "billingMonth": "YYYY-MM", "newBillDate": "YYYY-MM-DD" }
+  * Spoken response: "Ji sir, JSW Steel ka Bill #1544 duplicate kar diya hai. Nayi date aaj ki set kardi hai. Kya isme koi Overtime ya rate change karna hai sir?"
+- "OPEN_NEW_FORM": ONLY when user explicitly says "naya bill banao", "blank bill open karo".
 
-6. DATA READING & PROFESSIONAL CHAT:
-   - If user asks data questions ("JSW ka pichhla grand total kya tha?", "Current bill kitna hua?"):
-     * Read from context and answer accurately. Leave "actions" as [].
-   - If user greets or makes small talk ("Hey Sara kaise ho"):
-     * Answer with high warmth and executive polish.
+============================================================
+6. FORKLIFT OVERTIME (OT), DIESEL & FORM FIELDS:
+============================================================
+- OT with hours & rate: "OT 10 hours 500 rate" -> { "type": "ADD_LINE_ITEM", "particulars": "OVERTIME CHARGES - 10 HRS @ ₹500/HR", "rate": "500", "amount": 5000 }
+- Diesel deduction: "Diesel ka 2500 kaat lo" -> { "type": "ADD_LINE_ITEM", "particulars": "DIESEL DEDUCTION", "amount": -2500 }
+- Dates: "Date kal ki kardo" -> { "type": "SET_FIELD", "field": "billDate", "value": "YYYY-MM-DD" }
+- Save: "Bill save kardo" -> { "type": "SAVE_INVOICE" }
+- Close: "Band kardo" -> { "type": "CLOSE_FORM" }
 
 CURRENT SYSTEM CONTEXT:
 • ACTIVE FIRM: ${activeFirm}
 • TODAY'S DATE: 2026-10-19
-• CURRENT FORM OPEN ON SCREEN: ${currentFormState?.isOpen ? 'YES (Form is active)' : 'NO (Form is closed)'}
-• CURRENT FORM DATA:
+• FORM OPEN ON SCREEN: ${currentFormState?.isOpen ? 'YES (Form is open and visible)' : 'NO (Form is closed)'}
+• CURRENT FORM ITEMS ON SCREEN:
+${screenItemsList}
+• FULL FORM DATA:
 ${JSON.stringify(currentFormState || {}, null, 2)}
 
 REGISTERED COMPANIES:
 ${companiesList}
 
-RECENT INVOICES IN SYSTEM:
+RECENT INVOICES IN SYSTEM (LAST 100 INVOICES):
 ${recentInvoicesList}
 
 STRICT JSON SCHEMA OUTPUT:
 {
-  "spokenResponse": "string (Crisp, respectful Hinglish from 10-yr Billing Head Sara)",
+  "spokenResponse": "string (Crisp, authoritative, detailed Hinglish from 10-Yr Billing Head Sara)",
   "needsUserResponse": boolean,
   "actions": [
     {
-      "type": "OPEN_NEW_FORM" | "DUPLICATE_INVOICE" | "SET_FIELD" | "ADD_LINE_ITEM" | "UPDATE_LINE_ITEM" | "REMOVE_LINE_ITEM" | "SAVE_INVOICE" | "CLOSE_FORM",
+      "type": "OPEN_NEW_FORM" | "DUPLICATE_INVOICE" | "SET_FIELD" | "ADD_LINE_ITEM" | "UPDATE_LINE_ITEM" | "REMOVE_LINE_ITEM" | "REMOVE_EMPTY_ITEMS" | "HIGHLIGHT_FIELD" | "SAVE_INVOICE" | "CLOSE_FORM",
       "field"?: string,
       "value"?: any,
+      "target"?: string,
       "invoiceId"?: string,
       "billNo"?: number,
       "billingMonth"?: string,
@@ -169,12 +201,12 @@ STRICT JSON SCHEMA OUTPUT:
     });
 
     const models = [
+      'gemini-3.8-flash',
       'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash',
-      'gemini-3.8-flash'
+      'gemini-3.1-pro-preview'
     ];
     let parsedResult: any = null;
+    let lastAuthError = '';
 
     for (const model of models) {
       try {
@@ -209,7 +241,10 @@ STRICT JSON SCHEMA OUTPUT:
           }
         } else {
           const errText = await res.text().catch(() => '');
-          console.warn(`Model ${model} returned ${res.status}:`, errText.slice(0, 120));
+          console.warn(`Model ${model} returned ${res.status}:`, errText.slice(0, 150));
+          if (errText.includes('leaked') || errText.includes('API key') || res.status === 403) {
+            lastAuthError = "Sir, Google Gemini API Key block ya leaked mark ho gayi hai. Kripya naya free API key Google AI Studio se generate karke .env.local file me set karein.";
+          }
         }
       } catch (err: any) {
         console.warn(`Model ${model} attempt failed:`, err?.message || err);
@@ -217,6 +252,13 @@ STRICT JSON SCHEMA OUTPUT:
     }
 
     if (!parsedResult) {
+      if (lastAuthError) {
+        return NextResponse.json({
+          spokenResponse: lastAuthError,
+          needsUserResponse: false,
+          actions: []
+        });
+      }
       return NextResponse.json({
         spokenResponse: "Maaf kijiye sir, main command theek se samajh nahi payi. Kripya dobara bolein.",
         needsUserResponse: false,
