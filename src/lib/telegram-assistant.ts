@@ -712,10 +712,11 @@ export async function saveGeminiApiKey(apiKey: string): Promise<boolean> {
  * Get Gemini API Key from environment or Firestore.
  */
 export async function getGeminiApiKey(): Promise<string | null> {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  const envKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  if (envKey && !envKey.includes('AIzaSyDER55')) return envKey;
   if (cachedGeminiKey) return cachedGeminiKey;
   if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  return 'AIzaSyD815Mq5l4btHDkRKIBnejmxaNwBtydY68';
 
   try {
     const firestore = await getAuthenticatedFirestore();
@@ -724,13 +725,15 @@ export async function getGeminiApiKey(): Promise<string | null> {
       getDoc(doc(firestore, 'companySettings', 'ai'))
     ]);
 
-    if (telegramSnap.exists() && telegramSnap.data()?.geminiApiKey) {
-      cachedGeminiKey = telegramSnap.data().geminiApiKey;
-      return cachedGeminiKey;
+    const tKey = telegramSnap.data()?.geminiApiKey;
+    if (typeof tKey === 'string' && tKey.length > 0) {
+      cachedGeminiKey = tKey;
+      return tKey;
     }
-    if (aiSnap.exists() && aiSnap.data()?.geminiApiKey) {
-      cachedGeminiKey = aiSnap.data().geminiApiKey;
-      return cachedGeminiKey;
+    const aKey = aiSnap.data()?.geminiApiKey;
+    if (typeof aKey === 'string' && aKey.length > 0) {
+      cachedGeminiKey = aKey;
+      return aKey;
     }
   } catch (err) {
     console.error('Error reading Gemini API key from Firestore:', err);

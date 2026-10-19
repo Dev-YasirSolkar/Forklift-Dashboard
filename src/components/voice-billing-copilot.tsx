@@ -205,10 +205,11 @@ export function VoiceBillingCopilot({
         })
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'Server processing error');
+        const fallbackSpeech = data.spokenResponse || data.error || 'Server processing error';
+        throw new Error(fallbackSpeech);
       }
 
       const assistantMsg: Message = {
@@ -238,7 +239,9 @@ export function VoiceBillingCopilot({
 
     } catch (error: any) {
       console.error('Voice Processing Failed:', error);
-      const errMsg = "Kuch technical problem aayi hai. Kripya dobara bolein.";
+      const errMsg = error?.message && error.message !== 'Server processing error'
+        ? error.message
+        : "Sara abhi server se connect nahi ho pa rahi hai. Kripya dobara try karein.";
       setMessages(prev => [...prev, {
         role: 'assistant',
         text: errMsg,
