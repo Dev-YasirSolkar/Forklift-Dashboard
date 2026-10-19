@@ -50,6 +50,24 @@ interface RequestBody {
     enterprise: string;
     items: Array<{ particulars: string; rate?: string; amount: number }>;
   }>;
+  dashboardStats?: {
+    nextBillNo?: number;
+    skippedBillNumbers?: number[];
+    activeFirmInvoicesCount?: number;
+    totalInvoicesCount?: number;
+    months?: Array<{
+      key: string;
+      label: string;
+      count: number;
+      minBillNo?: number;
+      maxBillNo?: number;
+      billNumbers?: number[];
+      grandTotal?: number;
+      netTotal?: number;
+      taxTotal?: number;
+      companies?: string[];
+    }>;
+  };
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
 }
 
@@ -67,7 +85,7 @@ export async function POST(req: Request) {
     }
 
     const body: RequestBody = await req.json();
-    const { userSpeech, activeFirm, activeSubject, currentFormState, companies = [], recentInvoices = [], conversationHistory = [] } = body;
+    const { userSpeech, activeFirm, activeSubject, currentFormState, companies = [], recentInvoices = [], dashboardStats, conversationHistory = [] } = body;
 
     if (!userSpeech || !userSpeech.trim()) {
       return NextResponse.json({ error: 'Speech prompt is empty' }, { status: 400 });
@@ -89,9 +107,96 @@ export async function POST(req: Request) {
     const twoMonthsAgoStr = `${twoMonthsAgoDate.getFullYear()}-${String(twoMonthsAgoDate.getMonth() + 1).padStart(2, '0')}`;
     const twoMonthsAgoName = twoMonthsAgoDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
+    // Mathematical Pre-calculation of Exact Audit Totals & Monthly Statistics
+    const getFirm = (ent?: string): 'Vithal' | 'RV' => {
+      const s = (ent || '').toLowerCase().trim();
+      if (s.includes('rv') || s.includes('r.v')) return 'RV';
+      return 'Vithal';
+    };
+
+    const getInvMonth = (inv: { billingMonth?: string; billDate?: string }) => {
+      if (inv.billingMonth && inv.billingMonth.trim().length >= 7) return inv.billingMonth.trim().slice(0, 7);
+      if (inv.billDate && inv.billDate.length >= 7) return inv.billDate.slice(0, 7);
+      return 'Unknown';
+    };
+
+    const firmStats = {
+      Vithal: { totalCount: 0, totalAmount: 0, months: new Map<string, any>() },
+      RV: { totalCount: 0, totalAmount: 0, months: new Map<string, any>() }
+    };
+
+    for (const inv of recentInvoices) {
+      const firm = getFirm(inv.enterprise);
+      const mKey = getInvMonth(inv);
+      const gTot = Number(inv.grandTotal) || 0;
+      const subTot = Number(inv.subTotal) || 0;
+      const taxTot = Number(inv.taxTotal) || 0;
+
+      firmStats[firm].totalCount += 1;
+      firmStats[firm].totalAmount += gTot;
+
+      if (!firmStats[firm].months.has(mKey)) {
+        firmStats[firm].months.set(mKey, {
+          monthKey: mKey,
+          count: 0,
+          grandTotal: 0,
+          subTotal: 0,
+          taxTotal: 0,
+          billNumbers: [] as number[],
+          companies: new Map<string, number>()
+        });
+      }
+
+      const mData = firmStats[firm].months.get(mKey)!;
+      mData.count += 1;
+      mData.grandTotal += gTot;
+      mData.subTotal += subTot;
+      mData.taxTotal += taxTot;
+      if (inv.billNo) mData.billNumbers.push(Number(inv.billNo));
+      const cName = inv.companyName || 'Unknown Company';
+      mData.companies.set(cName, (mData.companies.get(cName) || 0) + 1);
+    }
+
+    const buildFirmSummary = (firm: 'Vithal' | 'RV') => {
+      const data = firmStats[firm];
+      const sortedMonths = Array.from(data.months.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+      if (sortedMonths.length === 0) return `  No bills recorded for ${firm}.`;
+
+      return sortedMonths.map(m => {
+        const sortedBills = [...m.billNumbers].sort((a, b) => a - b);
+        const minBill = sortedBills.length ? sortedBills[0] : 'N/A';
+        const maxBill = sortedBills.length ? sortedBills[sortedBills.length - 1] : 'N/A';
+        const isCurrent = m.monthKey === currentMonthStr;
+        const isPrev = m.monthKey === prevMonthStr;
+        const tag = isCurrent ? ' [CURRENT RUNNING / REGULAR MONTH]' : (isPrev ? ' [PREVIOUS MONTH]' : '');
+
+        const companyEntries: string[] = [];
+        m.companies.forEach((count: number, c: string) => {
+          companyEntries.push(`${c} (${count} bills)`);
+        });
+        const companiesList = companyEntries.join(', ');
+
+        return `• Month: ${m.monthKey}${tag}
+  - Exact Bill Count: ${m.count} bills
+  - Bill Numbers: ${sortedBills.join(', ')} (Range: Bill #${minBill} to #${maxBill})
+  - Total Grand Amount: ₹${Math.round(m.grandTotal).toLocaleString('en-IN')}
+  - Total Basic (Without GST): ₹${Math.round(m.subTotal).toLocaleString('en-IN')}
+  - Total GST (18%): ₹${Math.round(m.taxTotal).toLocaleString('en-IN')}
+  - Companies in Month: ${companiesList || 'None'}`;
+      }).join('\n\n');
+    };
+
+    const vithalSummaryText = buildFirmSummary('Vithal');
+    const rvSummaryText = buildFirmSummary('RV');
+
+    const screenFoldersSummary = (dashboardStats?.months || []).map(m => {
+      const billsList = m.billNumbers && m.billNumbers.length ? `(Bills: #${m.billNumbers.sort((a, b) => a - b).join(', #')})` : `(Bill #${m.minBillNo || ''} to #${m.maxBillNo || ''})`;
+      return `• Screen Folder: "${m.label}" (Month: ${m.key}) => EXACTLY ${m.count} BILLS ${billsList} | Total: ₹${Math.round(m.grandTotal || 0).toLocaleString('en-IN')}`;
+    }).join('\n') || '  (None available)';
+
     // Prepare compact context for prompt
     const companiesList = companies.slice(0, 80).map(c => `• ID: "${c.id}" => Name: "${c.name}"`).join('\n');
-    const recentInvoicesList = recentInvoices.slice(0, 150).map(inv => {
+    const recentInvoicesList = recentInvoices.slice(0, 300).map(inv => {
       const itemsText = (inv.items || []).map(i => `"${i.particulars}" @ ₹${i.rate || ''} = ₹${i.amount}`).join('; ');
       return `• Bill #${inv.billNo} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Firm: ${inv.enterprise} | BillDate: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | WithoutGST(Subtotal): ₹${inv.subTotal || inv.grandTotal} | GST(18%): ₹${inv.taxTotal || 0} | AdvanceDeducted: ₹${inv.advanceReceived || 0} | Discount: ₹${inv.discount || 0} | GrandTotal: ₹${inv.grandTotal} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${itemsText}]`;
     }).join('\n') || '  (No past invoices found)';
@@ -106,7 +211,49 @@ You understand everything about industrial forklift hire (3T, 4T, 5T, 8T, 10T, 1
 You speak in crisp, confident, respectful, natural Hinglish (always addressing the user respectfully as "Sir" or "Ji sir").
 
 ============================================================
-0. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION ("उसका", "ISKA", "US BILL KA"):
+0. EXACT PRE-CALCULATED AUDIT COUNTS & BUSINESS METRICS (100% ACCURATE):
+============================================================
+CRITICAL INSTRUCTION: NEVER GUESS OR MANUALLY COUNT FROM RAW LISTS!
+ALWAYS USE THESE PRE-CALCULATED EXACT FIGURES FOR ANY COUNT, TURNOVER, OR STATISTICAL INQUIRY:
+
+• CURRENT ACTIVE FIRM ON SCREEN: ${activeFirm}
+• ACTIVE FIRM TOTAL INVOICES: ${dashboardStats?.activeFirmInvoicesCount ?? firmStats[activeFirm].totalCount} bills
+• TOTAL INVOICES IN SYSTEM (BOTH FIRMS): ${recentInvoices.length} bills (Vithal: ${firmStats['Vithal'].totalCount}, RV: ${firmStats['RV'].totalCount})
+• NEXT UPCOMING BILL NUMBER FOR ${activeFirm}: Bill #${dashboardStats?.nextBillNo || 'N/A'}
+• SKIPPED / MISSING BILL NUMBERS IN ${activeFirm}: ${dashboardStats?.skippedBillNumbers?.length ? `Bill #${dashboardStats.skippedBillNumbers.join(', #')} are skipped` : 'None (continuous serial numbers)'}
+
+SCREEN INVOICE FOLDERS FOR ${activeFirm} (AS DISPLAYED ON SCREEN):
+${screenFoldersSummary}
+
+PRE-CALCULATED MONTHLY BREAKDOWN FOR VITHAL ENTERPRISES:
+${vithalSummaryText}
+
+PRE-CALCULATED MONTHLY BREAKDOWN FOR R.V ENTERPRISES:
+${rvSummaryText}
+
+RULES FOR ANSWERING AUDIT & COUNT QUESTIONS:
+1. "Vithal me regular month me kitne bill bane hain?" / "Regular month me kitne bill hain?":
+   - "Regular month" / "chalu mahina" / "running month" / "current month" refers to the active/current running month (${currentMonthName} / ${currentMonthStr}) or the active top month folder on screen!
+   - State the EXACT pre-calculated bill count for that month (e.g. 18 bills)!
+   - Response example: "Sir, Vithal Enterprises me regular current month (${currentMonthName}) me total [ExactCount] bills bane hain (Bill No. [min] se [max] tak), jinka total turnover ₹[GrandTotal] hai."
+   - If asked for previous month ("pichhle mahine kitne bill the"):
+     State the exact count for ${prevMonthName} (${prevMonthStr}).
+
+2. "Total kitne bill bane hain?":
+   - State: "Sir, ${activeFirm} me total ${dashboardStats?.activeFirmInvoicesCount ?? firmStats[activeFirm].totalCount} bills bane hain (aur dono firms milakar total ${recentInvoices.length} bills hain)."
+
+3. "Koi bill number skip ya miss hua hai kya?":
+   - If skipped numbers exist: "Sir, ${activeFirm} me Bill #[Numbers] skip hua hai."
+   - If no skips: "Sir, koi bhi bill number skip nahi hua hai, serial number bilkul continuous hai."
+
+4. "Agla bill number kya banega?" / "Next bill number kya hai?":
+   - State: "Sir, ${activeFirm} me agla bill number ${dashboardStats?.nextBillNo || 'next'} banega."
+
+5. "Sabse zyada bill kis company ke hain?" / "Highest billing kis company ki hai?":
+   - State the company name, count, and amount from the breakdown.
+
+============================================================
+1. CONVERSATIONAL MEMORY & PRONOUN RESOLUTION ("उसका", "ISKA", "US BILL KA"):
 ============================================================
 • PREVIOUS TOPIC / SUBJECT IN ACTIVE CONVERSATION:
   ${activeSubject && (activeSubject.companyName || activeSubject.billNo)
@@ -134,7 +281,7 @@ CRITICAL RULES FOR PRONOUNS ("उसका", "iska", "us bill ka", "isme", "uska
 3. ALWAYS return "activeSubject" in the JSON response so the client can keep tracking the active company & bill number!
 
 ============================================================
-1. DEEP BILL INQUIRY & HUMAN-LIKE FINANCIAL ASSISTANCE:
+2. DEEP BILL INQUIRY & HUMAN-LIKE FINANCIAL ASSISTANCE:
 ============================================================
 You have FULL READ ACCESS to all past invoices and the active billing section.
 When the user asks ANY question about bills, answer naturally, clearly, and authoritatively like a human billing head:

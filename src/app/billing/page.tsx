@@ -2198,7 +2198,7 @@ export default function BillingPage() {
             editingInvoiceId: editingInvoice?.id || null,
           }}
           companies={companies ? companies.map(c => ({ id: c.id, name: c.name })) : []}
-          recentInvoices={sortedInvoicesForVoice.slice(0, 150).map(inv => {
+          recentInvoices={sortedInvoicesForVoice.slice(0, 300).map(inv => {
             const compName = inv.clientCompanyDetails?.name || companies?.find(c => c.id === inv.companyId)?.name || 'Company';
             return {
               id: inv.id,
@@ -2218,6 +2218,24 @@ export default function BillingPage() {
               items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
             };
           })}
+          dashboardStats={{
+            nextBillNo: nextBillNumber,
+            skippedBillNumbers: skippedBillNumbers,
+            activeFirmInvoicesCount: filteredInvoices.length,
+            totalInvoicesCount: allInvoices?.length || 0,
+            months: organizedInvoices.flatMap(y => y.months.map(m => ({
+              key: m.key,
+              label: m.label,
+              count: m.invoices.length,
+              minBillNo: Math.min(...m.invoices.map(i => i.billNo)),
+              maxBillNo: Math.max(...m.invoices.map(i => i.billNo)),
+              billNumbers: m.invoices.map(i => i.billNo),
+              grandTotal: m.invoices.reduce((sum, i) => sum + (Number(i.grandTotal) || 0), 0),
+              netTotal: m.invoices.reduce((sum, i) => sum + (Number(i.netTotal) || 0), 0),
+              taxTotal: m.invoices.reduce((sum, i) => sum + ((Number(i.cgst) || 0) + (Number(i.sgst) || 0)), 0),
+              companies: Array.from(new Set(m.invoices.map(i => i.clientCompanyDetails?.name || companies?.find(c => c.id === i.companyId)?.name || 'Company')))
+            })))
+          }}
           onExecuteAction={handleVoiceAction}
         />
 

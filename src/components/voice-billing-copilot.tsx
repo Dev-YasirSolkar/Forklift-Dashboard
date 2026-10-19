@@ -31,6 +31,25 @@ export interface ActiveSubject {
   invoiceId?: string;
 }
 
+export interface DashboardStats {
+  nextBillNo?: number;
+  skippedBillNumbers?: number[];
+  activeFirmInvoicesCount?: number;
+  totalInvoicesCount?: number;
+  months?: Array<{
+    key: string;
+    label: string;
+    count: number;
+    minBillNo?: number;
+    maxBillNo?: number;
+    billNumbers?: number[];
+    grandTotal?: number;
+    netTotal?: number;
+    taxTotal?: number;
+    companies?: string[];
+  }>;
+}
+
 interface VoiceBillingCopilotProps {
   activeFirm: 'Vithal' | 'RV';
   currentFormState: {
@@ -69,6 +88,7 @@ interface VoiceBillingCopilotProps {
     enterprise: string;
     items: Array<{ particulars: string; rate?: string; amount: number }>;
   }>;
+  dashboardStats?: DashboardStats;
   onExecuteAction: (action: VoiceAction) => void;
 }
 
@@ -83,6 +103,7 @@ export function VoiceBillingCopilot({
   currentFormState,
   companies,
   recentInvoices,
+  dashboardStats,
   onExecuteAction,
 }: VoiceBillingCopilotProps) {
   const { toast } = useToast();
@@ -260,6 +281,7 @@ export function VoiceBillingCopilot({
           currentFormState,
           companies,
           recentInvoices,
+          dashboardStats,
           conversationHistory: historyPayload
         })
       });
@@ -324,7 +346,7 @@ export function VoiceBillingCopilot({
       setIsProcessing(false);
       setTranscript('');
     }
-  }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, messages, onExecuteAction, speakResponse]);
+  }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, dashboardStats, messages, onExecuteAction, speakResponse]);
 
   // Start Voice Recognition
   const startListening = useCallback(() => {
@@ -624,8 +646,11 @@ export function VoiceBillingCopilot({
           {/* Quick Voice Prompt Suggestions */}
           <div className="p-2.5 bg-muted/20 border-t flex flex-wrap gap-1.5">
             {[
+              "Vithal me regular month me kitne bill bane?",
               "Metropolitan ka without GST amount?",
               "Uska after GST amount kitna hua?",
+              "Koi bill number skip hua hai kya?",
+              "Agla bill number kya banega?",
               "26 din ke hisab se 2 din absent calculate karo",
               "Transportation 2 trips @ 5000 add karo",
               "Isme se blank row remove karo",
