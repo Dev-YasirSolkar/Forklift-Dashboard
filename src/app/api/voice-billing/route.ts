@@ -14,7 +14,11 @@ interface RequestBody {
     billingMonth?: string;
     poNumber?: string;
     site?: string;
-    items?: Array<{ particulars: string; rate?: string; amount: number }>;
+    items?: Array<{ index?: number; particulars: string; rate?: string; amount: number; isBlank?: boolean }>;
+    subTotal?: number;
+    taxTotal?: number;
+    grandTotal?: number;
+    balanceDue?: number;
     discount?: string;
     advanceReceived?: string;
     tdsPercentage?: string;
@@ -61,11 +65,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Speech prompt is empty' }, { status: 400 });
     }
 
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const dayName = today.toLocaleDateString('en-US', { weekday: 'long' });
+    const currentYear = today.getFullYear();
+    const currentMonthNum = today.getMonth() + 1;
+    const currentMonthStr = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
+    const currentMonthName = today.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    const prevMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonthName = prevMonthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    const twoMonthsAgoDate = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    const twoMonthsAgoStr = `${twoMonthsAgoDate.getFullYear()}-${String(twoMonthsAgoDate.getMonth() + 1).padStart(2, '0')}`;
+    const twoMonthsAgoName = twoMonthsAgoDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
     // Prepare compact context for prompt
-    const companiesList = companies.slice(0, 60).map(c => `• ID: "${c.id}" => Name: "${c.name}"`).join('\n');
-    const recentInvoicesList = recentInvoices.slice(0, 100).map(inv => 
-      `• Bill #${inv.billNo} [ID: "${inv.id}"] | Firm: ${inv.enterprise} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Date: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | GrandTotal: ₹${inv.grandTotal} | Subtotal: ₹${inv.subTotal || inv.grandTotal} | GST/Tax: ₹${inv.taxTotal || 0} | Advance: ₹${inv.advanceReceived || 0} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${inv.items.map(i => `"${i.particulars}" @ ₹${i.rate || ''} = ₹${i.amount}`).join('; ')}]`
-    ).join('\n');
+    const companiesList = companies.slice(0, 80).map(c => `• ID: "${c.id}" => Name: "${c.name}"`).join('\n');
+    const recentInvoicesList = recentInvoices.slice(0, 150).map(inv => {
+      const itemsText = (inv.items || []).map(i => `"${i.particulars}" @ ₹${i.rate || ''} = ₹${i.amount}`).join('; ');
+      return `• Bill #${inv.billNo} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Firm: ${inv.enterprise} | BillDate: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | WithoutGST(Subtotal): ₹${inv.subTotal || inv.grandTotal} | GST(18%): ₹${inv.taxTotal || 0} | AdvanceDeducted: ₹${inv.advanceReceived || 0} | Discount: ₹${inv.discount || 0} | GrandTotal: ₹${inv.grandTotal} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${itemsText}]`;
+    }).join('\n') || '  (No past invoices found)';
 
     const screenItemsList = (currentFormState?.items || []).map((it: any, idx: number) => 
       `  [Row #${idx}] Particulars: "${it.particulars || ''}" | Rate: "${it.rate || ''}" | Amount: ₹${it.amount || 0} | Status: ${(!it.particulars?.trim() && (!it.amount || it.amount === 0)) ? 'BLANK / EMPTY (Needs Filling)' : 'FILLED'}`
@@ -77,18 +98,61 @@ You understand everything about industrial forklift hire (3T, 4T, 5T, 8T, 10T, 1
 You speak in crisp, confident, respectful, natural Hinglish (always addressing the user respectfully as "Sir" or "Ji sir").
 
 ============================================================
-1. DEEP BILL INQUIRY & HINT SEARCH (ANSWERING QUESTIONS):
+1. DEEP BILL INQUIRY & HUMAN-LIKE FINANCIAL ASSISTANCE:
 ============================================================
-When the user asks ANY question about past bills (e.g. "pichhle mahine kya bill bana tha?", "us bill ka final amount kya tha?", "Tata ka 5 ton ka rate kya tha?", "Bill 1544 ka grand total kya tha?"):
-- SEARCH thoroughly through "RECENT INVOICES IN SYSTEM" using ANY clue/hint provided:
-  * Company name or nickname/alias (e.g. JSW, Tata, Bisleri, Mahindra, Godrej, DHL)
-  * Month / Time (e.g. "pichhle mahine" -> September 2026; "August ka bill")
-  * Equipment / Tonnage mentioned (e.g. "4 ton", "5 ton", "forklift hire", "shift")
-  * Bill number or PO number
-- FORMULATE AN AUTHORITATIVE, DETAILED BREAKDOWN in "spokenResponse":
-  * State the exact Bill #, Date & Month, Company Name, Particulars & Rate, Subtotal, GST, Advance deducted (if any), and Grand Total.
-  * Example: "Ji sir! JSW Steel ka September 2026 me Bill #1544 bana tha. Isme 3 Ton Forklift Monthly Hire ka ₹45,000 + 18% GST lagkar total ₹53,100 ka bill tha, aur advance ₹10,000 deduct hokar net balance ₹43,100 tha."
-- Leave "actions": [] (no screen modifications needed).
+You have FULL READ ACCESS to all past invoices and the active billing section.
+When the user asks ANY question about bills, answer naturally, clearly, and authoritatively like a human billing head:
+
+A. "विदाउट जीएसटी अमाउंट क्या है" (Without GST / Subtotal / Basic Amount):
+   - If user asks about a past bill (e.g. "JSW ke pichhle bill ka without GST amount kya tha?", "Bill 125 ka basic amount kya hai?"):
+     -> Find that invoice in RECENT INVOICES below.
+     -> Extract "WithoutGST(Subtotal)".
+     -> Response: "Sir, [Company] ke Bill #[No] ka without GST basic amount ₹[Subtotal] hai."
+   - If user asks while a form is open on screen (without mentioning past bill):
+     -> Response: "Sir, screen par jo bill khula hai uska without GST basic amount ₹[currentFormState.subTotal] hai."
+
+B. "जीएसटी अमाउंट कितना है" (GST 18% / Tax Amount):
+   - If user asks about a past bill:
+     -> Extract "GST(18%)" from that invoice.
+     -> Response: "Sir, is bill me 18% GST amount ₹[taxTotal] hai (CGST ₹[taxTotal/2] + SGST ₹[taxTotal/2])."
+   - If user asks about the form on screen:
+     -> Response: "Sir, current bill me 18% GST amount ₹[currentFormState.taxTotal] hai."
+
+C. "टोटल बिल अमाउंट क्या है" (Grand Total / Final Amount):
+   - State the Grand Total, and mention advance deducted if any:
+     -> Response: "Sir, iska total grand bill amount ₹[grandTotal] hai." (If advance was deducted: "aur ₹[advance] advance deduct hokar balance due ₹[balanceDue] tha.")
+
+D. "बिल नंबर बताने पर कंपनी का नाम और पूरी डिटेल्स बताना":
+   - When user asks about a Bill Number (e.g. "Bill 125 kis company ka hai?", "125 number bill kiska hai?", "Bill 125 ki details batao"):
+     -> Instantly match the bill by Bill number in RECENT INVOICES below.
+     -> State Company Name, Date/Month, Firm (${activeFirm}), Without GST amount, GST amount, Grand total, and forklift equipment:
+     Example: "Sir, Bill #125 [Company Name] ka hai, jo [BillDate] ko bana tha. Isme without GST amount ₹[Subtotal], 18% GST ₹[Tax], aur total bill amount ₹[GrandTotal] hai."
+   - If the bill number is not in records:
+     Example: "Sir, Bill #[number] hamare system me nahi mila. Kripya bill number check karke dobara bolein."
+
+E. "कंपनी का नाम बताने पर पिछले महीने के बिल ढूंढना":
+   - When user asks e.g. "JSW ka pichhle mahine ka bill kya tha?" or "Tata ka last month ka bill final amount kya tha?":
+     -> Match company by name/alias (case-insensitive fuzzy match: JSW, Tata, Bisleri, Mahindra, Godrej, DHL, etc.).
+     -> Match month to "${prevMonthStr}" (${prevMonthName}) or date within September 2026.
+     -> Give a complete, clear breakdown!
+     -> If multiple bills exist for that company in that month:
+        Example: "Sir, pichhle mahine (${prevMonthName}) me JSW ke 2 bills bane the: Bill #124 (₹50,000) aur Bill #125 (₹53,100). Aap kis bill ki specific detail janna chahte hain?"
+     -> If no bill exists in that exact month:
+        Find their latest bill from another month and state:
+        "Sir, pichhle mahine (${prevMonthName}) me [Company] ka koi bill nahi bana tha, lekin unka latest bill [Month] me Bill #[No] bana tha ₹[GrandTotal] ka."
+
+F. CROSS QUESTIONS & HINTS:
+   - "Advance kata tha kya?" -> Check AdvanceDeducted.
+   - "PO number kya tha?" -> Check PO.
+   - "Kaun si site ka bill tha?" -> Check Site.
+   - "Forklift ka kya rate lagaya tha?" -> Read Items & Rate.
+
+G. NORMAL HUMAN CONVERSATION:
+   - "Hi Sara", "Hello", "Kaise ho?", "Good morning", "Aap kaun ho?":
+     -> Respond warmly, politely, and helpfully like a real human colleague:
+     Example: "Namaste sir! Main bilkul theek hoon. Aaj billing me kya kaam karna hai? Naya bill banana hai ya kisi purane bill ki inquiry karni hai?"
+
+NOTE: For all inquiries, bill searches, questions, and normal conversation, ALWAYS set "actions": [] (do NOT modify or close the screen form!).
 
 ============================================================
 2. ROW REUSE & INTELLIGENT IN-PLACE EDITING (CRITICAL):
@@ -146,8 +210,18 @@ When the user's request is ambiguous or refers to a line without index (e.g. "is
 
 CURRENT SYSTEM CONTEXT:
 • ACTIVE FIRM: ${activeFirm}
-• TODAY'S DATE: 2026-10-19
+• TODAY'S DATE: ${todayStr} (${dayName})
+• CURRENT MONTH: ${currentMonthStr} (${currentMonthName})
+• LAST MONTH: ${prevMonthStr} (${prevMonthName})
+• TWO MONTHS AGO: ${twoMonthsAgoStr} (${twoMonthsAgoName})
 • FORM OPEN ON SCREEN: ${currentFormState?.isOpen ? 'YES (Form is open and visible)' : 'NO (Form is closed)'}
+${currentFormState?.isOpen ? `• FORM FINANCIAL BREAKDOWN ON SCREEN:
+  - Company: "${currentFormState.companyName || 'Not selected'}"
+  - Without GST (Subtotal): ₹${currentFormState.subTotal || 0}
+  - 18% GST (Tax): ₹${currentFormState.taxTotal || 0}
+  - Grand Total: ₹${currentFormState.grandTotal || 0}
+  - Advance Deducted: ₹${currentFormState.advanceReceived || '0'}
+  - Balance Due: ₹${currentFormState.balanceDue || currentFormState.grandTotal || 0}` : ''}
 • CURRENT FORM ITEMS ON SCREEN:
 ${screenItemsList}
 • FULL FORM DATA:
@@ -156,7 +230,7 @@ ${JSON.stringify(currentFormState || {}, null, 2)}
 REGISTERED COMPANIES:
 ${companiesList}
 
-RECENT INVOICES IN SYSTEM (LAST 100 INVOICES):
+RECENT INVOICES IN SYSTEM (SORTED NEWEST FIRST):
 ${recentInvoicesList}
 
 STRICT JSON SCHEMA OUTPUT:

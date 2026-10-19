@@ -35,6 +35,10 @@ interface VoiceBillingCopilotProps {
     poNumber?: string;
     site?: string;
     items?: Array<{ index?: number; particulars: string; rate?: string; amount: number; isBlank?: boolean }>;
+    subTotal?: number;
+    taxTotal?: number;
+    grandTotal?: number;
+    balanceDue?: number;
     discount?: string;
     advanceReceived?: string;
     tdsPercentage?: string;

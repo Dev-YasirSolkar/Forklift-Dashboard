@@ -812,6 +812,15 @@ export default function BillingPage() {
     return skipped;
   }, [filteredInvoices]);
 
+  const sortedInvoicesForVoice = useMemo(() => {
+    if (!allInvoices) return [];
+    return [...allInvoices].sort((a, b) => {
+      const dateA = a.billDate || '';
+      const dateB = b.billDate || '';
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return (b.billNo || 0) - (a.billNo || 0);
+    });
+  }, [allInvoices]);
 
   const organizedInvoices = useMemo(() => {
     if (!filteredInvoices) return [];
@@ -2167,29 +2176,36 @@ export default function BillingPage() {
               amount: it.amount,
               isBlank: !it.particulars.trim() && (!it.amount || it.amount === 0)
             })),
+            subTotal: calculations.netTotal,
+            taxTotal: (calculations.cgst || 0) + (calculations.sgst || 0),
+            grandTotal: calculations.grandTotal,
+            balanceDue: calculations.balanceDue,
             discount: discount,
             advanceReceived: advanceReceived,
             tdsPercentage: tdsPercentage,
             editingInvoiceId: editingInvoice?.id || null,
           }}
           companies={companies ? companies.map(c => ({ id: c.id, name: c.name })) : []}
-          recentInvoices={allInvoices ? allInvoices.slice(0, 100).map(inv => ({
-            id: inv.id,
-            billNo: inv.billNo,
-            companyId: inv.companyId,
-            companyName: inv.clientCompanyDetails?.name || 'Company',
-            billDate: inv.billDate,
-            billingMonth: inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : ''),
-            grandTotal: inv.grandTotal,
-            subTotal: inv.netTotal,
-            taxTotal: (inv.cgst || 0) + (inv.sgst || 0),
-            advanceReceived: inv.advanceReceived,
-            discount: inv.discount,
-            poNumber: inv.poNumber,
-            site: inv.site,
-            enterprise: inv.enterprise,
-            items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
-          })) : []}
+          recentInvoices={sortedInvoicesForVoice.slice(0, 150).map(inv => {
+            const compName = inv.clientCompanyDetails?.name || companies?.find(c => c.id === inv.companyId)?.name || 'Company';
+            return {
+              id: inv.id,
+              billNo: inv.billNo,
+              companyId: inv.companyId,
+              companyName: compName,
+              billDate: inv.billDate,
+              billingMonth: inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : ''),
+              grandTotal: inv.grandTotal,
+              subTotal: inv.netTotal,
+              taxTotal: (inv.cgst || 0) + (inv.sgst || 0),
+              advanceReceived: inv.advanceReceived || 0,
+              discount: inv.discount || 0,
+              poNumber: inv.poNumber || '',
+              site: inv.site || '',
+              enterprise: inv.enterprise,
+              items: (inv.items || []).map(it => ({ particulars: it.particulars, rate: it.rate, amount: it.amount }))
+            };
+          })}
           onExecuteAction={handleVoiceAction}
         />
 
