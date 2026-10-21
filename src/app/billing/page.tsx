@@ -833,7 +833,7 @@ export default function BillingPage() {
     };
 
     const groupedByYear = filteredInvoices.reduce((acc, invoice) => {
-      const dateForGrouping = invoice.billingMonth ? parseISO(`${invoice.billingMonth}-01`) : parseISO(invoice.billDate);
+      const dateForGrouping = invoice.billDate ? parseISO(invoice.billDate) : (invoice.billingMonth ? parseISO(`${invoice.billingMonth}-01`) : new Date());
       const financialYearStart = getFinancialYear(dateForGrouping);
       const yearKey = `${financialYearStart}-${financialYearStart + 1}`;
       
@@ -855,7 +855,7 @@ export default function BillingPage() {
       const maxBill = Math.max(...yearInvoices.map(inv => inv.billNo));
       
       const groupedByMonth = yearInvoices.reduce((acc, invoice) => {
-        const monthKey = invoice.billingMonth || format(parseISO(invoice.billDate), 'yyyy-MM');
+        const monthKey = invoice.billDate ? format(parseISO(invoice.billDate), 'yyyy-MM') : (invoice.billingMonth || 'Unknown');
         if (!acc[monthKey]) {
           acc[monthKey] = [];
         }
@@ -866,14 +866,22 @@ export default function BillingPage() {
       const months = Object.entries(groupedByMonth).map(([monthKey, monthInvoices]) => {
         const monthMinBill = Math.min(...monthInvoices.map(inv => inv.billNo));
         const monthMaxBill = Math.max(...monthInvoices.map(inv => inv.billNo));
-        const monthDate = parseISO(`${monthKey}-01`);
+        let monthLabel = monthKey;
+        try {
+          if (monthKey && monthKey !== 'Unknown') {
+            const monthDate = parseISO(`${monthKey}-01`);
+            monthLabel = format(monthDate, 'MM-MMM yyyy').toUpperCase();
+          }
+        } catch {
+          monthLabel = monthKey;
+        }
         
         // Sort invoices within the month by bill number ascending
         const sortedMonthInvoices = monthInvoices.sort((a,b) => a.billNo - b.billNo);
 
         return {
           key: monthKey,
-          label: `${format(monthDate, 'MM-MMM yyyy').toUpperCase()} (BILL NO-${monthMinBill}-${monthMaxBill})`,
+          label: `${monthLabel} (BILL NO-${monthMinBill}-${monthMaxBill})`,
           invoices: sortedMonthInvoices,
         };
       }).sort((a, b) => a.key.localeCompare(b.key));

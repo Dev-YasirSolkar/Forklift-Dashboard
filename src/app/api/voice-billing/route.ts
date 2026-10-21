@@ -115,8 +115,8 @@ export async function POST(req: Request) {
     };
 
     const getInvMonth = (inv: { billingMonth?: string; billDate?: string }) => {
-      if (inv.billingMonth && inv.billingMonth.trim().length >= 7) return inv.billingMonth.trim().slice(0, 7);
       if (inv.billDate && inv.billDate.length >= 7) return inv.billDate.slice(0, 7);
+      if (inv.billingMonth && inv.billingMonth.trim().length >= 7) return inv.billingMonth.trim().slice(0, 7);
       return 'Unknown';
     };
 
@@ -198,7 +198,7 @@ export async function POST(req: Request) {
     const companiesList = companies.slice(0, 80).map(c => `• ID: "${c.id}" => Name: "${c.name}"`).join('\n');
     const recentInvoicesList = recentInvoices.slice(0, 300).map(inv => {
       const itemsText = (inv.items || []).map(i => `"${i.particulars}" @ ₹${i.rate || ''} = ₹${i.amount}`).join('; ');
-      return `• Bill #${inv.billNo} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Firm: ${inv.enterprise} | BillDate: ${inv.billDate} | Month: ${inv.billingMonth || (inv.billDate ? inv.billDate.slice(0, 7) : '')} | WithoutGST(Subtotal): ₹${inv.subTotal || inv.grandTotal} | GST(18%): ₹${inv.taxTotal || 0} | AdvanceDeducted: ₹${inv.advanceReceived || 0} | Discount: ₹${inv.discount || 0} | GrandTotal: ₹${inv.grandTotal} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${itemsText}]`;
+      return `• Bill #${inv.billNo} | Company: "${inv.companyName}" (ID: "${inv.companyId}") | Firm: ${inv.enterprise} | BillDate: ${inv.billDate} | FolderMonth: ${inv.billDate ? inv.billDate.slice(0, 7) : (inv.billingMonth || '')} | ServiceMonth: ${inv.billingMonth || ''} | WithoutGST(Subtotal): ₹${inv.subTotal || inv.grandTotal} | GST(18%): ₹${inv.taxTotal || 0} | AdvanceDeducted: ₹${inv.advanceReceived || 0} | Discount: ₹${inv.discount || 0} | GrandTotal: ₹${inv.grandTotal} | PO: "${inv.poNumber || ''}" | Site: "${inv.site || ''}" | Items: [${itemsText}]`;
     }).join('\n') || '  (No past invoices found)';
 
     const screenItemsList = (currentFormState?.items || []).map((it: any, idx: number) => 
@@ -232,6 +232,7 @@ PRE-CALCULATED MONTHLY BREAKDOWN FOR R.V ENTERPRISES:
 ${rvSummaryText}
 
 RULES FOR ANSWERING AUDIT & COUNT QUESTIONS:
+NOTE: Invoice folders and monthly statistics are strictly grouped by **BillDate** (Invoice Date) matching the dashboard screen folders! (ServiceMonth indicates the hire period).
 1. "Vithal me regular month me kitne bill bane hain?" / "Regular month me kitne bill hain?":
    - "Regular month" / "chalu mahina" / "running month" / "current month" refers to the active/current running month (${currentMonthName} / ${currentMonthStr}) or the active top month folder on screen!
    - State the EXACT pre-calculated bill count for that month (e.g. 18 bills)!
