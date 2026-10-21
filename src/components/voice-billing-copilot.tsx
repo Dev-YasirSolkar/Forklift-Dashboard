@@ -7,9 +7,26 @@ import { Badge } from '@/components/ui/badge';
 import { Mic, MicOff, Volume2, VolumeX, Sparkles, Loader2, X, Radio, Check, Headphones } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { VirtualCursor, type VirtualCursorRef } from '@/components/virtual-cursor';
 
 export interface VoiceAction {
-  type: 'OPEN_NEW_FORM' | 'DUPLICATE_INVOICE' | 'SET_FIELD' | 'ADD_LINE_ITEM' | 'UPDATE_LINE_ITEM' | 'REMOVE_LINE_ITEM' | 'REMOVE_EMPTY_ITEMS' | 'HIGHLIGHT_FIELD' | 'SAVE_INVOICE' | 'CLOSE_FORM';
+  type: 
+    | 'SWITCH_TAB'
+    | 'OPEN_FOLDER'
+    | 'OPEN_INVOICE_PREVIEW'
+    | 'OPEN_NEW_FORM' 
+    | 'DUPLICATE_INVOICE' 
+    | 'SET_FIELD' 
+    | 'ADD_LINE_ITEM' 
+    | 'UPDATE_LINE_ITEM' 
+    | 'REMOVE_LINE_ITEM' 
+    | 'REMOVE_EMPTY_ITEMS' 
+    | 'HIGHLIGHT_FIELD' 
+    | 'SAVE_INVOICE' 
+    | 'CLOSE_FORM';
+  enterprise?: 'Vithal' | 'RV';
+  monthKey?: string;
+  yearKey?: string;
   field?: string;
   value?: any;
   target?: string;
@@ -128,6 +145,7 @@ export function VoiceBillingCopilot({
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const isHandsFreeRef = useRef(true);
   const isSpeakingRef = useRef(false);
+  const cursorRef = useRef<VirtualCursorRef>(null);
 
   useEffect(() => {
     isHandsFreeRef.current = isHandsFree;
@@ -236,6 +254,152 @@ export function VoiceBillingCopilot({
     }
   }, [isMuted]);
 
+  // Execute an individual voice action with human-like mouse glide and clicks
+  const executeActionWithVirtualCursor = useCallback(async (action: VoiceAction) => {
+    const cursor = cursorRef.current;
+
+    switch (action.type) {
+      case 'SWITCH_TAB': {
+        const ent = action.enterprise || 'Vithal';
+        const tabTriggerId = ent === 'RV' ? 'tab-trigger-rv' : 'tab-trigger-vithal';
+        if (cursor) {
+          await cursor.glideToAndClick(tabTriggerId, `Switching to ${ent}`);
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 220));
+        break;
+      }
+      case 'OPEN_FOLDER': {
+        const mKey = action.monthKey || '';
+        const yKey = action.yearKey || '';
+        
+        let monthTriggerEl = document.getElementById(`accordion-month-trigger-${mKey}`);
+        
+        // If month trigger is not visible, the year accordion might need to be opened first!
+        if (!monthTriggerEl && yKey) {
+          const yearTriggerEl = document.getElementById(`accordion-year-trigger-${yKey}`);
+          if (yearTriggerEl && cursor) {
+            await cursor.glideToAndClick(yearTriggerEl, `Opening Year ${yKey}`);
+            onExecuteAction({ type: 'OPEN_FOLDER', yearKey: yKey });
+            await new Promise(r => setTimeout(r, 280));
+          }
+        }
+
+        monthTriggerEl = document.getElementById(`accordion-month-trigger-${mKey}`);
+        if (monthTriggerEl && cursor) {
+          await cursor.glideToAndClick(monthTriggerEl, `Opening Month ${mKey}`);
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 200));
+        break;
+      }
+      case 'OPEN_INVOICE_PREVIEW': {
+        const billNo = action.billNo;
+        const targetEl = (billNo ? document.getElementById(`invoice-preview-desk-${billNo}`) : null) ||
+                         (billNo ? document.getElementById(`invoice-row-${billNo}`) : null) ||
+                         (billNo ? document.getElementById(`invoice-card-${billNo}`) : null);
+        if (targetEl && cursor) {
+          await cursor.glideToAndClick(targetEl, `Opening Bill #${billNo || ''}`);
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 200));
+        break;
+      }
+      case 'OPEN_NEW_FORM': {
+        const addBtn = document.getElementById('btn-add-invoice');
+        if (addBtn && cursor) {
+          await cursor.glideToAndClick(addBtn, 'Opening New Invoice Form');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 220));
+        break;
+      }
+      case 'DUPLICATE_INVOICE': {
+        const billNo = action.billNo;
+        const targetRow = billNo ? document.getElementById(`invoice-row-${billNo}`) || document.getElementById(`invoice-card-${billNo}`) : null;
+        if (targetRow && cursor) {
+          await cursor.glideToAndClick(targetRow, `Duplicating Bill #${billNo}`);
+        } else if (cursor) {
+          const addBtn = document.getElementById('btn-add-invoice');
+          if (addBtn) await cursor.glideToAndClick(addBtn, 'Duplicating Bill');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 220));
+        break;
+      }
+      case 'SET_FIELD': {
+        const fieldName = action.field;
+        let targetEl: HTMLElement | null = null;
+        if (fieldName === 'companyId') targetEl = document.getElementById('company');
+        else if (fieldName) targetEl = document.getElementById(fieldName);
+
+        if (targetEl && cursor) {
+          await cursor.glideToAndClick(targetEl, `Entering ${fieldName}`);
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 160));
+        break;
+      }
+      case 'ADD_LINE_ITEM': {
+        const addItemBtn = document.getElementById('btn-add-item');
+        if (addItemBtn && cursor) {
+          await cursor.glideToAndClick(addItemBtn, 'Adding Line Item');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 160));
+        break;
+      }
+      case 'REMOVE_LINE_ITEM': {
+        const removeBtn = document.getElementById(`btn-remove-item-${action.index}`);
+        if (removeBtn && cursor) {
+          await cursor.glideToAndClick(removeBtn, `Removing Row #${(action.index ?? 0) + 1}`);
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 160));
+        break;
+      }
+      case 'REMOVE_EMPTY_ITEMS': {
+        if (cursor) {
+          cursor.showStatus('Cleaning Empty Rows', 'info');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 160));
+        break;
+      }
+      case 'SAVE_INVOICE': {
+        const saveBtn = document.getElementById('btn-save-invoice');
+        if (saveBtn && cursor) {
+          await cursor.glideToAndClick(saveBtn, 'Saving Invoice');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 220));
+        break;
+      }
+      case 'CLOSE_FORM': {
+        const closeBtn = document.getElementById('btn-close-form');
+        if (closeBtn && cursor) {
+          await cursor.glideToAndClick(closeBtn, 'Closing Form');
+        }
+        onExecuteAction(action);
+        await new Promise(r => setTimeout(r, 160));
+        break;
+      }
+      case 'HIGHLIGHT_FIELD': {
+        const targetId = action.target || (action.index !== undefined ? `line-item-row-${action.index}` : action.field);
+        const el = targetId ? document.getElementById(targetId) : null;
+        if (el && cursor) {
+          await cursor.glideToAndClick(el, 'Inspecting Field');
+        }
+        onExecuteAction(action);
+        break;
+      }
+      default: {
+        onExecuteAction(action);
+        break;
+      }
+    }
+  }, [onExecuteAction]);
+
   // Send speech to Backend API and execute automation
   const handleProcessSpeech = useCallback(async (speechText: string) => {
     if (!speechText.trim()) return;
@@ -305,13 +469,13 @@ export function VoiceBillingCopilot({
       };
       setMessages(prev => [...prev, assistantMsg]);
 
-      // Execute actions step-by-step with visual satisfaction
+      // Execute actions step-by-step with realistic human-like mouse glide & clicks
       if (Array.isArray(data.actions) && data.actions.length > 0) {
         for (let i = 0; i < data.actions.length; i++) {
           const action = data.actions[i];
-          onExecuteAction(action);
-          await new Promise(r => setTimeout(r, 120));
+          await executeActionWithVirtualCursor(action);
         }
+        cursorRef.current?.showStatus('Done ✓', 'success');
       }
 
       // Speak back the response
@@ -346,7 +510,7 @@ export function VoiceBillingCopilot({
       setIsProcessing(false);
       setTranscript('');
     }
-  }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, dashboardStats, messages, onExecuteAction, speakResponse]);
+  }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, dashboardStats, messages, onExecuteAction, speakResponse, executeActionWithVirtualCursor]);
 
   // Start Voice Recognition
   const startListening = useCallback(() => {
@@ -738,6 +902,9 @@ export function VoiceBillingCopilot({
           )}
         </button>
       </div>
+
+      {/* Human-like Autonomous Virtual AI Cursor */}
+      <VirtualCursor ref={cursorRef} />
     </div>
   );
 }

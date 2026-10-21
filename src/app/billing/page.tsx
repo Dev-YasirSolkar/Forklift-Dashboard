@@ -300,8 +300,8 @@ const InvoiceList = ({
     ) : invoices.length > 0 ? (
         <Accordion type="multiple" className="w-full" value={openYearAccordions} onValueChange={setOpenYearAccordions}>
             {invoices.map((year: any) => (
-                 <AccordionItem value={`year-${year.key}`} key={year.key} className="mb-2 border-0">
-                    <AccordionTrigger className="px-3 sm:px-4 py-3 bg-muted/50 hover:bg-muted/80 rounded-md text-xs sm:text-sm font-medium hover:no-underline">
+                 <AccordionItem value={`year-${year.key}`} key={year.key} id={`accordion-year-item-${year.key}`} className="mb-2 border-0">
+                    <AccordionTrigger id={`accordion-year-trigger-${year.key}`} className="px-3 sm:px-4 py-3 bg-muted/50 hover:bg-muted/80 rounded-md text-xs sm:text-sm font-medium hover:no-underline">
                         <div className="flex items-center gap-2 sm:gap-3">
                           <Folder className="h-4 w-4 sm:h-5 w-5 text-amber-500 fill-amber-500/20" />
                           <span>{year.label}</span>
@@ -311,8 +311,8 @@ const InvoiceList = ({
                          <Accordion type="multiple" className="w-full" value={openMonthAccordions} onValueChange={setOpenMonthAccordions}>
                             {year.months.map((month: any) => {
                                 return (
-                                <AccordionItem value={`month-${month.key}`} key={month.key} className="border-l-0 md:border-l-2 border-dashed border-border pl-0 md:pl-4 py-1">
-                                    <AccordionTrigger className="flex items-center justify-between flex-1 text-[10px] sm:text-xs font-medium hover:no-underline p-2 sm:p-3 bg-muted/50 hover:bg-muted/80 rounded-md">
+                                <AccordionItem value={`month-${month.key}`} key={month.key} id={`accordion-month-item-${month.key}`} className="border-l-0 md:border-l-2 border-dashed border-border pl-0 md:pl-4 py-1">
+                                    <AccordionTrigger id={`accordion-month-trigger-${month.key}`} className="flex items-center justify-between flex-1 text-[10px] sm:text-xs font-medium hover:no-underline p-2 sm:p-3 bg-muted/50 hover:bg-muted/80 rounded-md">
                                          <div className="flex items-center gap-2">
                                               <Folder className="h-3.5 w-3.5 sm:h-4 w-4 text-amber-500 fill-amber-500/20" />
                                               <span>{month.label}</span>
@@ -333,6 +333,7 @@ const InvoiceList = ({
                                                 return (
                                                     <div 
                                                         key={invoice.id} 
+                                                        id={`invoice-card-${invoice.billNo}`}
                                                         onClick={() => actionProps.openPreviewDialog(invoice)}
                                                         onContextMenu={(e) => {
                                                             e.preventDefault();
@@ -425,7 +426,7 @@ const InvoiceList = ({
                                                     const isSelected = selectedInvoices.includes(invoice.id);
                                                     const selectionIndex = isSelected ? selectedInvoices.indexOf(invoice.id) + 1 : 0;
                                                     return (
-                                                        <TableRow key={invoice.id} data-state={isSelected ? "selected" : ""}>
+                                                        <TableRow key={invoice.id} id={`invoice-row-${invoice.billNo}`} data-state={isSelected ? "selected" : ""}>
                                                             <TableCell className="px-4 py-2">
                                                                 <div 
                                                                   id={`select-inv-desk-${invoice.id}`}
@@ -446,7 +447,7 @@ const InvoiceList = ({
                                                                     )}
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="font-medium cursor-pointer py-2" onClick={() => actionProps.openPreviewDialog(invoice)}>
+                                                            <TableCell id={`invoice-preview-desk-${invoice.billNo}`} className="font-medium cursor-pointer py-2" onClick={() => actionProps.openPreviewDialog(invoice)}>
                                                                 <div className="flex items-center gap-2">
                                                                     {invoice.billNo}-{invoice.billNoSuffix || 'MHE'}
                                                                     {invoice.isDuplicate && (
@@ -1230,6 +1231,69 @@ export default function BillingPage() {
   
   const handleVoiceAction = useCallback((action: VoiceAction) => {
     switch (action.type) {
+      case 'SWITCH_TAB': {
+        const ent = action.enterprise;
+        if (ent && (ent === 'Vithal' || ent === 'RV')) {
+          setActiveTab(ent);
+          toast({
+            title: "Voice: Tab Switched",
+            description: `${ent} Enterprises active.`
+          });
+        }
+        break;
+      }
+      case 'OPEN_FOLDER': {
+        let mKey = action.monthKey || '';
+        let yKey = action.yearKey || '';
+        if (!yKey && mKey.length >= 7) {
+          try {
+            const d = parseISO(`${mKey.slice(0, 7)}-01`);
+            const month = d.getMonth();
+            const year = d.getFullYear();
+            const fy = month >= 3 ? year : year - 1;
+            yKey = `${fy}-${fy + 1}`;
+          } catch (e) {}
+        }
+        if (yKey) {
+          setOpenYearAccordions(prev => prev.includes(`year-${yKey}`) ? prev : [...prev, `year-${yKey}`]);
+        }
+        if (mKey) {
+          setOpenMonthAccordions(prev => prev.includes(`month-${mKey}`) ? prev : [...prev, `month-${mKey}`]);
+          setTimeout(() => {
+            const el = document.getElementById(`accordion-month-trigger-${mKey}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 200);
+        }
+        toast({
+          title: "Voice: Folder Opened",
+          description: `Opened ${mKey || yKey} folder.`
+        });
+        break;
+      }
+      case 'OPEN_INVOICE_PREVIEW': {
+        let matchedInvoice: Invoice | undefined;
+        if (action.invoiceId) {
+          matchedInvoice = allInvoices?.find(inv => inv.id === action.invoiceId);
+        } else if (action.billNo !== undefined && action.billNo !== null) {
+          const rawNum = typeof action.billNo === 'number' ? action.billNo : parseInt(String(action.billNo).replace(/\D/g, ''), 10);
+          matchedInvoice = allInvoices?.find(inv => inv.billNo === rawNum && inv.enterprise === activeTab) ||
+                           allInvoices?.find(inv => inv.billNo === rawNum);
+        }
+        if (matchedInvoice) {
+          openPreviewDialog(matchedInvoice);
+          toast({
+            title: "Voice: Bill Opened",
+            description: `Viewing Bill #${matchedInvoice.billNo} (${matchedInvoice.clientCompanyDetails?.name || 'Company'}).`
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Bill Not Found",
+            description: `Bill #${action.billNo || ''} nahi mila.`
+          });
+        }
+        break;
+      }
       case 'OPEN_NEW_FORM': {
         openFormDialog(null);
         if (action.companyId) {
@@ -1477,7 +1541,7 @@ export default function BillingPage() {
         break;
       }
     }
-  }, [allInvoices, isFormDialogOpen, openFormDialog, handleFormSubmit, toast]);
+  }, [allInvoices, isFormDialogOpen, openFormDialog, handleFormSubmit, toast, activeTab, openPreviewDialog]);
 
   const handleGlobalSettingsChange = (field: keyof CompanySettings, value: any) => {
     setGlobalPageSettings((prev: any) => ({ ...prev, [field]: value }));
@@ -1663,15 +1727,15 @@ export default function BillingPage() {
                                     </DropdownMenuPortal>
                                 </DropdownMenu>
                             </div>
-                            <Button onClick={() => openFormDialog(null)} size="sm" className="h-8 text-xs">
+                            <Button id="btn-add-invoice" onClick={() => openFormDialog(null)} size="sm" className="h-8 text-xs">
                                 <PlusCircle className="mr-1.5 h-3.5 w-3.5" />
                                 Add Invoice
                             </Button>
                         </div>
                     </div>
                      <TabsList className="grid w-full grid-cols-2 mt-4 h-9">
-                        <TabsTrigger value="Vithal" className="text-xs">Vithal</TabsTrigger>
-                        <TabsTrigger value="RV" className="text-xs">RV</TabsTrigger>
+                        <TabsTrigger id="tab-trigger-vithal" value="Vithal" className="text-xs">Vithal</TabsTrigger>
+                        <TabsTrigger id="tab-trigger-rv" value="RV" className="text-xs">RV</TabsTrigger>
                     </TabsList>
                 </CardHeader>
                 <CardContent>
@@ -1899,14 +1963,14 @@ export default function BillingPage() {
                                             onChange={(e) => handleItemChange(item.key, 'amount', e.target.value)}
                                             className={cn("w-full sm:w-32 md:w-48 text-right h-9 text-xs sm:text-sm", highlightedField === `amount-${index}` && "ring-2 ring-primary")}
                                         />
-                                        <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.key)} disabled={items.length === 1} className="h-8 w-8">
+                                        <Button id={`btn-remove-item-${index}`} variant="ghost" size="icon" onClick={() => handleRemoveItem(item.key)} disabled={items.length === 1} className="h-8 w-8">
                                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                         </Button>
                                     </div>
                                 </div>
                             );
                             })}
-                            <Button variant="outline" size="sm" onClick={handleAddItem} className="h-8 text-xs">
+                            <Button id="btn-add-item" variant="outline" size="sm" onClick={handleAddItem} className="h-8 text-xs">
                                 <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Item
                             </Button>
                         </div>
@@ -2052,8 +2116,8 @@ export default function BillingPage() {
                     </div>
                 </div>
                 <DialogFooter className="p-4 sm:p-6 pt-4 border-t flex gap-2">
-                    <Button variant="outline" onClick={() => setIsFormDialogOpen(false)} className="h-9 text-xs sm:text-sm">Cancel</Button>
-                    <Button onClick={handleFormSubmit} className="h-9 text-xs sm:text-sm">
+                    <Button id="btn-close-form" variant="outline" onClick={() => setIsFormDialogOpen(false)} className="h-9 text-xs sm:text-sm">Cancel</Button>
+                    <Button id="btn-save-invoice" onClick={handleFormSubmit} className="h-9 text-xs sm:text-sm">
                         {editingInvoice ? 'Update Invoice' : 'Save Invoice'}
                     </Button>
                 </DialogFooter>

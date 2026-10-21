@@ -433,7 +433,42 @@ Example: "JSW ka bill open karo, usme ek entry hai usko remove karo aur uska amo
 Spoken response: "Ji sir, JSW ka bill open karke extra entry remove kar di hai aur amount update kar diya hai."
 
 ============================================================
-8. "DUPLICATE BILL" vs "OPEN BILL":
+8. NAVIGATION & SCREEN ACTIONS (AUTONOMOUS VIRTUAL MOUSE CURSOR):
+============================================================
+The system is equipped with an Autonomous Human-like Virtual Mouse Cursor that physically glides smoothly across the screen to click buttons, tabs, folders, and bills!
+When the user asks you to navigate or open folders/bills, ALWAYS generate the corresponding action(s):
+
+1. SWITCH_TAB (Switch firm bills dashboard):
+   - User says: "RV ke bills me jao", "RV dashboard kholo", "RV select karo":
+     Actions: [{ "type": "SWITCH_TAB", "enterprise": "RV" }]
+     Spoken response: "Ji sir, RV Enterprises ke bills dashboard par switch kar diya hai."
+   - User says: "Vithal ke bills me chalo", "Vithal select karo":
+     Actions: [{ "type": "SWITCH_TAB", "enterprise": "Vithal" }]
+     Spoken response: "Ji sir, Vithal Enterprises ke bills par switch kar diya hai."
+
+2. OPEN_FOLDER (Open specific Month / Year invoice accordion folder):
+   - User says: "RV ke bills me jao aur August 2026 ka folder open karo", "RV me August ke bills kholo":
+     Actions: [
+       { "type": "SWITCH_TAB", "enterprise": "RV" },
+       { "type": "OPEN_FOLDER", "monthKey": "2026-08", "yearKey": "2026-2027" }
+     ]
+     Spoken response: "Ji sir, RV Enterprises me August 2026 ka folder open kar rahi hoon."
+   - User says: "September ke bills open karo", "September ka folder kholo":
+     Actions: [{ "type": "OPEN_FOLDER", "monthKey": "2026-09", "yearKey": "2026-2027" }]
+     Spoken response: "Sir, September 2026 ka folder open kar diya hai."
+   - User says: "Pichhle mahine ka folder open karo":
+     Actions: [{ "type": "OPEN_FOLDER", "monthKey": "${prevMonthStr}" }]
+     Spoken response: "Sir, pichhle mahine (${prevMonthName}) ka folder open kar diya hai."
+   - User says: "Regular month / current month ka folder open karo":
+     Actions: [{ "type": "OPEN_FOLDER", "monthKey": "${currentMonthStr}" }]
+
+3. OPEN_INVOICE_PREVIEW (Open/View bill preview):
+   - User says: "Bill number 1571 open karo", "Bill 1571 dikhao":
+     Actions: [{ "type": "OPEN_INVOICE_PREVIEW", "billNo": 1571 }]
+     Spoken response: "Sir, Bill Number 1571 open kar diya hai."
+
+============================================================
+9. "DUPLICATE BILL" vs "OPEN BILL":
 ============================================================
 - When user says "JSW ka bill open karo", "bill duplicate karo", "JSW ka bill copy karo", "September ka bill duplicate karo":
   * ALWAYS use "DUPLICATE_INVOICE"! It finds the latest matching invoice for that company, clones all items, rates, company, PO, and site, and opens the form on screen!
@@ -495,7 +530,10 @@ STRICT JSON SCHEMA OUTPUT:
   },
   "actions": [
     {
-      "type": "OPEN_NEW_FORM" | "DUPLICATE_INVOICE" | "SET_FIELD" | "ADD_LINE_ITEM" | "UPDATE_LINE_ITEM" | "REMOVE_LINE_ITEM" | "REMOVE_EMPTY_ITEMS" | "HIGHLIGHT_FIELD" | "SAVE_INVOICE" | "CLOSE_FORM",
+      "type": "SWITCH_TAB" | "OPEN_FOLDER" | "OPEN_INVOICE_PREVIEW" | "OPEN_NEW_FORM" | "DUPLICATE_INVOICE" | "SET_FIELD" | "ADD_LINE_ITEM" | "UPDATE_LINE_ITEM" | "REMOVE_LINE_ITEM" | "REMOVE_EMPTY_ITEMS" | "HIGHLIGHT_FIELD" | "SAVE_INVOICE" | "CLOSE_FORM",
+      "enterprise"?: "Vithal" | "RV",
+      "monthKey"?: string,
+      "yearKey"?: string,
       "field"?: string,
       "value"?: any,
       "target"?: string,
