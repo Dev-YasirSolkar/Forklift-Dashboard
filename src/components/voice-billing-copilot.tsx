@@ -145,6 +145,7 @@ export function VoiceBillingCopilot({
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const isHandsFreeRef = useRef(true);
   const isSpeakingRef = useRef(false);
+  const lastSpokeEndTimeRef = useRef<number>(0);
   const cursorRef = useRef<VirtualCursorRef>(null);
 
   useEffect(() => {
@@ -187,6 +188,7 @@ export function VoiceBillingCopilot({
   // High-Quality Human-Touch Female Voice TTS for Sara
   const speakResponse = useCallback((text: string, onEnd?: () => void) => {
     if (isMuted || !synthRef.current) {
+      lastSpokeEndTimeRef.current = Date.now();
       if (onEnd) onEnd();
       return;
     }
@@ -198,7 +200,14 @@ export function VoiceBillingCopilot({
       }
 
       synthRef.current.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
+
+      // Clean spoken text: Strip markdown artifacts, asterisks, hashes, brackets for smooth vocal delivery
+      const cleanSpokenText = text
+        .replace(/[*_#`~[\]]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const utterance = new SpeechSynthesisUtterance(cleanSpokenText);
       const voices = synthRef.current.getVoices();
 
       // Prioritize natural, fluent, and warm female voices (Hindi / Indian English / Neural)
@@ -216,7 +225,7 @@ export function VoiceBillingCopilot({
           v.lang.includes('IN') && 
           (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('neerja') || v.name.toLowerCase().includes('veena') || v.name.toLowerCase().includes('kavya'))
         ) ||
-        // 4. English Female (Samantha, Zira, Jenny)
+        // 4. Natural English Female (Samantha, Zira, Jenny)
         voices.find(v => 
           (v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('jenny')) &&
           !v.name.toLowerCase().includes('male')
@@ -227,9 +236,10 @@ export function VoiceBillingCopilot({
         utterance.voice = selectedVoice;
       }
 
-      // Crisp, natural human conversational pace & warm resonant pitch (pitch 1.00 avoids pinched squeak)
-      utterance.rate = 1.14;
-      utterance.pitch = 1.00;
+      // Warm, natural human pitch (0.94 creates a mature, calm chest-voice, eliminating sharp robot squeaks)
+      utterance.pitch = 0.94;
+      // Natural human conversational tempo (1.02 is relaxed, crisp and distinct)
+      utterance.rate = 1.02;
 
       utterance.onstart = () => {
         setIsSpeaking(true);
@@ -239,6 +249,7 @@ export function VoiceBillingCopilot({
       const finishSpeech = () => {
         setIsSpeaking(false);
         isSpeakingRef.current = false;
+        lastSpokeEndTimeRef.current = Date.now();
         if (onEnd) onEnd();
       };
 
@@ -250,6 +261,7 @@ export function VoiceBillingCopilot({
       console.warn('Sara TTS error:', e);
       setIsSpeaking(false);
       isSpeakingRef.current = false;
+      lastSpokeEndTimeRef.current = Date.now();
       if (onEnd) onEnd();
     }
   }, [isMuted]);
@@ -402,32 +414,55 @@ export function VoiceBillingCopilot({
 
   // Send speech to Backend API and execute automation
   const handleProcessSpeech = useCallback(async (speechText: string) => {
-    if (!speechText.trim()) return;
+    const trimmedSpeech = speechText.trim();
+    if (!trimmedSpeech) return;
+
+    // Check if user is asking to pause/stop/switch off Sara smoothly
+    const cleanLower = trimmedSpeech.toLowerCase();
+    const isStopCommand = 
+      /^(sara\s+)?(switch off|turn off|band karo|band ho jao|stop|bas|pause|khatam|ruk jao|chup ho jao|chup|so jao|thank you sara|shukriya|bye|alvida)\b/i.test(cleanLower) ||
+      /(switch off|turn off|सारा स्विच ऑफ|स्विच ऑफ|बंद करो|बंद हो जाओ|स्टॉप|रुको|रुक जाओ|बस करो|शांत हो जाओ|सो जाओ)/i.test(cleanLower);
+
+    if (isStopCommand) {
+      setIsHandsFree(false);
+      isHandsFreeRef.current = false;
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+      }
+      setIsListening(false);
+      
+      const pauseReply = "Theek hai sir, Sara switch off ho rahi hai. Jab bhi kaam ho, aap mic click kar sakte hain.";
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'user',
+          text: trimmedSpeech,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        {
+          role: 'assistant',
+          text: pauseReply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+      setIsProcessing(false);
+      setTranscript('');
+      speakResponse(pauseReply, () => {
+        // Smoothly collapse dialogue window after warm human farewell
+        setTimeout(() => {
+          setIsOpen(false);
+        }, 1600);
+      });
+      return;
+    }
 
     setIsProcessing(true);
     const userMsg: Message = {
       role: 'user',
-      text: speechText,
+      text: trimmedSpeech,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     setMessages(prev => [...prev, userMsg]);
-
-    // Check if user is asking to pause/stop listening
-    const isStopCommand = /^(stop|bas|pause|khatam|band karo|thank you sara|shukriya|bye)\b/i.test(speechText.trim());
-    if (isStopCommand) {
-      setIsHandsFree(false);
-      isHandsFreeRef.current = false;
-      const pauseReply = "Theek hai sir, main listening pause kar rahi hoon. Jab bhi kaam ho, mic click kijiye ga.";
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        text: pauseReply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
-      setIsProcessing(false);
-      setTranscript('');
-      speakResponse(pauseReply);
-      return;
-    }
 
     try {
       const historyPayload = messages.slice(-6).map(m => ({
@@ -439,7 +474,7 @@ export function VoiceBillingCopilot({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userSpeech: speechText,
+          userSpeech: trimmedSpeech,
           activeFirm,
           activeSubject,
           currentFormState,
@@ -481,11 +516,11 @@ export function VoiceBillingCopilot({
       // Speak back the response
       speakResponse(data.spokenResponse, () => {
         // Continuous Hands-Free Dialogue Loop:
-        // Automatically restart listening after Sara finishes speaking!
+        // Automatically restart listening after Sara finishes speaking with safe buffer!
         if (isHandsFreeRef.current) {
           setTimeout(() => {
             startListening();
-          }, 350);
+          }, 450);
         }
       });
 
@@ -503,7 +538,7 @@ export function VoiceBillingCopilot({
         if (isHandsFreeRef.current) {
           setTimeout(() => {
             startListening();
-          }, 400);
+          }, 500);
         }
       });
     } finally {
@@ -512,12 +547,13 @@ export function VoiceBillingCopilot({
     }
   }, [activeFirm, activeSubject, currentFormState, companies, recentInvoices, dashboardStats, messages, onExecuteAction, speakResponse, executeActionWithVirtualCursor]);
 
-  // Start Voice Recognition
+  // Start Voice Recognition with Intelligent Noise Gating & Reverb Protection
   const startListening = useCallback(() => {
     if (typeof window === 'undefined') return;
 
-    // Do not start if Sara is actively speaking
+    // Do not start if Sara is actively speaking or in echo cooldown
     if (isSpeakingRef.current) return;
+    if (Date.now() - lastSpokeEndTimeRef.current < 450) return;
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -530,7 +566,7 @@ export function VoiceBillingCopilot({
     }
 
     try {
-      if (synthRef.current) synthRef.current.cancel();
+      if (synthRef.current && isSpeakingRef.current) synthRef.current.cancel();
 
       if (recognitionRef.current) {
         try { recognitionRef.current.abort(); } catch (e) {}
@@ -541,33 +577,64 @@ export function VoiceBillingCopilot({
       recognition.continuous = false;
       recognition.interimResults = true;
 
+      let finalAccumulated = '';
+      let maxConfidence = 0;
+
+      const reArmListenLoop = (delay = 450) => {
+        if (isHandsFreeRef.current && !isSpeakingRef.current) {
+          setTimeout(() => {
+            if (isHandsFreeRef.current && !isSpeakingRef.current) {
+              try { recognition.start(); } catch (e) {}
+            }
+          }, delay);
+        }
+      };
+
       recognition.onstart = () => {
         setIsListening(true);
         setIsOpen(true);
+        finalAccumulated = '';
+        maxConfidence = 0;
       };
 
       recognition.onresult = (event: any) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          currentTranscript += event.results[i][0].transcript;
+        // Echo Prevention: If Sara finished speaking within 650ms, ignore laptop speaker echo
+        if (Date.now() - lastSpokeEndTimeRef.current < 650) {
+          return;
         }
-        setTranscript(currentTranscript);
+
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const res = event.results[i];
+          const text = res[0]?.transcript || '';
+          const conf = res[0]?.confidence ?? 1;
+
+          if (conf > maxConfidence) {
+            maxConfidence = conf;
+          }
+
+          if (res.isFinal) {
+            finalAccumulated += ' ' + text;
+          } else {
+            interim += text;
+          }
+        }
+
+        const displayText = (finalAccumulated + ' ' + interim).trim();
+        setTranscript(displayText);
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Speech recognition status:', event.error);
         if (event.error === 'no-speech') {
-          // If silence detected in hands-free mode, restart listen loop cleanly
           setIsListening(false);
-          if (isHandsFreeRef.current && !isSpeakingRef.current) {
-            setTimeout(() => {
-              if (isHandsFreeRef.current && !isSpeakingRef.current) {
-                try { recognition.start(); } catch (e) {}
-              }
-            }, 600);
-          }
+          reArmListenLoop(400);
           return;
         }
+        if (event.error === 'aborted') {
+          setIsListening(false);
+          return;
+        }
+        console.warn('Speech recognition status:', event.error);
         setIsListening(false);
         if (event.error === 'not-allowed') {
           toast({
@@ -580,17 +647,33 @@ export function VoiceBillingCopilot({
 
       recognition.onend = () => {
         setIsListening(false);
-        setTranscript(finalText => {
-          if (finalText && finalText.trim().length > 1) {
-            handleProcessSpeech(finalText);
-          } else if (isHandsFreeRef.current && !isSpeakingRef.current) {
-            // Re-arm listening if hands-free is active and no speech was finalized
-            setTimeout(() => {
-              if (isHandsFreeRef.current && !isSpeakingRef.current) {
-                try { recognition.start(); } catch (e) {}
-              }
-            }, 500);
+
+        // Echo cooldown check
+        if (Date.now() - lastSpokeEndTimeRef.current < 650) {
+          setTranscript('');
+          reArmListenLoop(450);
+          return;
+        }
+
+        setTranscript(prevDisplayed => {
+          const raw = (finalAccumulated || prevDisplayed || '').trim();
+          const cleaned = raw.replace(/^[\s.,?!:;]+|[\s.,?!:;]+$/g, '').trim();
+
+          // SMART NOISE GATE:
+          // Filter out trivial background noise, clicks, hums, and low confidence ambient sounds
+          const isTooShort = cleaned.length < 3;
+          const isAffirmative = /^(ha|haan|ok|no|nahi|rv|ve)$/i.test(cleaned);
+          const isNoiseSyllable = /^(\.|\?|,|uh|um|ah|oh|er|mm|hmm|theek|accha|acha|k|a|e|o)$/i.test(cleaned);
+          const isLowConfidenceNoise = (maxConfidence > 0 && maxConfidence < 0.40 && cleaned.split(' ').length <= 2);
+
+          if (!cleaned || (isTooShort && !isAffirmative) || isNoiseSyllable || isLowConfidenceNoise) {
+            // Silently discard ambient noise without disturbing the user or speaking
+            reArmListenLoop(450);
+            return '';
           }
+
+          // Legitimate speech command
+          handleProcessSpeech(cleaned);
           return '';
         });
       };
@@ -609,11 +692,12 @@ export function VoiceBillingCopilot({
     }
     setIsSpeaking(false);
     isSpeakingRef.current = false;
-    // Resume listening immediately so user can give next command without waiting
+    lastSpokeEndTimeRef.current = Date.now();
+    // Resume listening after 350ms buffer so mic doesn't pick up click sounds
     if (isHandsFreeRef.current) {
       setTimeout(() => {
         startListening();
-      }, 250);
+      }, 350);
     }
   }, [startListening]);
 
