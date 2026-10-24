@@ -17,23 +17,33 @@ export type Employee = {
   id: string;
   fullName: string;
   empCode?: string;
-  specialization: string;
+  specialization: string; // Designation
   department?: string;
-  contactNumber: string;
+  contactNumber: string; // Mobile Number
   whatsappNumber?: string;
+  aadhaarNumber?: string; // Aadhaar Card
+  panNumber?: string; // PAN Card
+  dateOfBirth?: string; // YYYY-MM-DD
+  bloodGroup?: string;
+  permanentAddress?: string;
+  currentAddress?: string;
+  emergencyContactName?: string;
+  emergencyContactRelationship?: string;
+  emergencyContactNumber?: string;
+  currentSiteName?: string; // Current Site Name
   workLocation: string;
   availability: boolean;
   doj?: string; // Date of Joining
   baseSalary?: number; // Default base salary for payroll
   otCalculationType?: 'fixed' | 'pro-rata'; // fixed hourly or based on salary
   otHourlyRate?: number; // The rate if fixed
-  panNumber?: string;
   pfNumber?: string;
   uanNumber?: string;
   esicNumber?: string;
   bankName?: string;
   bankAccountNumber?: string;
   telegramChatId?: string;
+  photoUrl?: string; // Employee photo for ID card
   createdAt?: string;
 };
 
