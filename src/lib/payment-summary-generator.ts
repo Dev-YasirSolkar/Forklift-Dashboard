@@ -212,7 +212,7 @@ export const generatePaymentSummaryPdf = async (
         const row: string[] = [];
         activeColIds.forEach(id => {
             switch(id) {
-                case 'billNo': row.push(`${inv.billNo}-${inv.billNoSuffix || 'MHE'}`); break;
+                case 'billNo': row.push(`${inv.billNo}-${inv.billNoSuffix || (inv.enterprise === 'RV' ? 'RV' : 'MHE')}`); break;
                 case 'date': row.push(format(new Date(inv.billDate), 'dd-MMM-yy')); break;
                 case 'company': row.push(inv.companyName.toUpperCase()); break;
                 case 'billed': row.push(inv.grandTotal.toLocaleString('en-IN')); break;

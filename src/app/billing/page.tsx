@@ -369,7 +369,7 @@ const InvoiceList = ({
                                                                 <div className="flex justify-between items-start gap-2">
                                                                     <div className="min-w-0 flex-1">
                                                                         <div className="text-[10px] font-black tracking-tight text-foreground truncate uppercase opacity-70 flex items-center gap-1.5 h-4">
-                                                                            {invoice.billNo}-{invoice.billNoSuffix || 'MHE'}
+                                                                            {invoice.billNo}-{invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE')}
                                                                             {invoice.isDuplicate && (
                                                                                 <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200 text-[7px] py-0 px-1 rounded-sm h-3.5 uppercase font-black">Duplicate</Badge>
                                                                             )}
@@ -449,7 +449,7 @@ const InvoiceList = ({
                                                             </TableCell>
                                                             <TableCell id={`invoice-preview-desk-${invoice.billNo}`} className="font-medium cursor-pointer py-2" onClick={() => actionProps.openPreviewDialog(invoice)}>
                                                                 <div className="flex items-center gap-2">
-                                                                    {invoice.billNo}-{invoice.billNoSuffix || 'MHE'}
+                                                                    {invoice.billNo}-{invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE')}
                                                                     {invoice.isDuplicate && (
                                                                         <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200 text-[10px] py-0 px-1 uppercase font-bold">Duplicate</Badge>
                                                                     )}
@@ -522,6 +522,7 @@ export default function BillingPage() {
     companyId: '',
     billDate: format(new Date(), 'yyyy-MM-dd'),
     billingMonth: toMonthString(new Date()),
+    billNoSuffix: 'MHE',
     poNumber: 'AGREEMENT',
     site: '',
     items: [{ key: `item-${Date.now()}`, particulars: '', rate: '', amount: 0 }],
@@ -535,6 +536,7 @@ export default function BillingPage() {
   const [companyId, setCompanyId] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [billingMonth, setBillingMonth] = useState<string>(toMonthString(new Date()));
+  const [billNoSuffix, setBillNoSuffix] = useState<string>('MHE');
   const [poNumber, setPoNumber] = useState('AGREEMENT');
   const [site, setSite] = useState('');
   const [items, setItems] = useState<InvoiceItem[]>(initialFormState.items);
@@ -632,6 +634,7 @@ export default function BillingPage() {
       setCompanyId(initialFormState.companyId);
       setBillDate(initialFormState.billDate);
       setBillingMonth(initialFormState.billingMonth);
+      setBillNoSuffix(formEnterprise === 'RV' ? 'RV' : 'MHE');
       setPoNumber(initialFormState.poNumber);
       setSite(initialFormState.site);
       setItems(initialFormState.items);
@@ -644,12 +647,13 @@ export default function BillingPage() {
       setInvoicePageSettings(liveDefaultPageSettings);
       setFormDownloadOptions(defaultDownloadOptions);
       setFormTemplate(liveDefaultTemplate);
-  }, [liveDefaultPageSettings, liveDefaultTemplate]);
+  }, [formEnterprise, liveDefaultPageSettings, liveDefaultTemplate]);
 
   const openFormDialog = useCallback((invoice: Invoice | null, billNoToFill?: number) => {
     if (invoice) {
       setEditingInvoice(invoice);
       setFormEnterprise(invoice.enterprise);
+      setBillNoSuffix(invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE'));
       setCompanyId(invoice.companyId);
       setBillDate(invoice.billDate);
       setBillingMonth(invoice.billingMonth || format(parseISO(invoice.billDate), 'yyyy-MM'));
@@ -675,6 +679,7 @@ export default function BillingPage() {
     } else {
       resetForm();
       setFormEnterprise(activeTab);
+      setBillNoSuffix(activeTab === 'RV' ? 'RV' : 'MHE');
       if (billNoToFill) {
           setBillNoOverride(billNoToFill);
       } else {
@@ -1081,10 +1086,11 @@ export default function BillingPage() {
           tableBodyFontSize: invoicePageSettings.tableBodyFontSize,
         };
 
+      const finalSuffix = (billNoSuffix || (formEnterprise === 'RV' ? 'RV' : 'MHE')).trim().toUpperCase();
       const invoiceData: Omit<Invoice, 'id'> = {
         enterprise: formEnterprise,
         billNo: billNoToUse,
-        billNoSuffix: 'MHE',
+        billNoSuffix: finalSuffix,
         billDate: billDate,
         billingMonth: billingMonth,
         companyId,
@@ -1124,7 +1130,7 @@ export default function BillingPage() {
 
           toast({
               title: 'Invoice Updated',
-              description: `Invoice No. ${invoiceData.billNo}-MHE has been updated.`,
+              description: `Invoice No. ${invoiceData.billNo}-${finalSuffix} has been updated.`,
           });
         } else {
             const { selectedBankAccount: _, ...dataForCreate } = invoiceData;
@@ -1136,7 +1142,7 @@ export default function BillingPage() {
             addDocumentNonBlocking(collection(firestore, 'invoices'), finalData);
             toast({
                 title: 'Invoice Saved',
-                description: `Invoice No. ${billNoToUse}-MHE has been saved.`,
+                description: `Invoice No. ${billNoToUse}-${finalSuffix} has been saved.`,
             });
         }
         setIsFormDialogOpen(false);
@@ -1174,7 +1180,7 @@ export default function BillingPage() {
 
     toast({
         title: "Invoice Duplicated",
-        description: `New invoice No. ${nextBillNumber}-MHE created.`,
+        description: `New invoice No. ${nextBillNumber}-${invoiceToDuplicate.billNoSuffix || (activeTab === 'RV' ? 'RV' : 'MHE')} created.`,
     });
     setInvoiceToDuplicate(null);
   };
@@ -1224,7 +1230,7 @@ export default function BillingPage() {
     deleteDocumentNonBlocking(invoiceDocRef);
     toast({
         title: "Invoice Deleted",
-        description: `Invoice No. ${invoiceToDelete.billNo}-MHE has been deleted.`,
+        description: `Invoice No. ${invoiceToDelete.billNo}-${invoiceToDelete.billNoSuffix || (invoiceToDelete.enterprise === 'RV' ? 'RV' : 'MHE')} has been deleted.`,
     });
     setInvoiceToDelete(null);
   };
@@ -1364,6 +1370,7 @@ export default function BillingPage() {
           setDiscountType(matchedInvoice.discountType || 'after_gst');
           setAdvanceReceived(String(matchedInvoice.advanceReceived || ''));
           setTdsPercentage(String(matchedInvoice.tdsPercentage || ''));
+          setBillNoSuffix(matchedInvoice.billNoSuffix || (matchedInvoice.enterprise === 'RV' ? 'RV' : 'MHE'));
           setBillNoOverride(null);
           setIsFormDialogOpen(true);
           toast({
@@ -1395,6 +1402,7 @@ export default function BillingPage() {
         if (action.field === 'discount') setDiscount(String(action.value));
         if (action.field === 'advanceReceived') setAdvanceReceived(String(action.value));
         if (action.field === 'tdsPercentage') setTdsPercentage(String(action.value));
+        if (action.field === 'billNoSuffix') setBillNoSuffix(String(action.value).toUpperCase());
         if (action.field === 'enterprise' || action.field === 'formEnterprise') {
           setFormEnterprise(action.value as Enterprise);
         }
@@ -1792,7 +1800,7 @@ export default function BillingPage() {
                                 {editingInvoice ? 'Edit Invoice' : (billNoOverride ? `Fill Missing No. ${billNoOverride}` : 'New Invoice')}
                             </DialogTitle>
                             <DialogDescription className="text-xs sm:text-sm">
-                                {editingInvoice ? `Updating No. ${editingInvoice.billNo}-MHE` : `Creating for ${formEnterprise} Enterprises.`}
+                                {editingInvoice ? `Updating No. ${editingInvoice.billNo}-${billNoSuffix || (editingInvoice.enterprise === 'RV' ? 'RV' : 'MHE')}` : `Creating No. ${billNoOverride || nextBillNumberForForm || 1}-${billNoSuffix || (formEnterprise === 'RV' ? 'RV' : 'MHE')} for ${formEnterprise} Enterprises.`}
                             </DialogDescription>
                         </div>
                         {!editingInvoice && !billNoOverride && (
@@ -1808,7 +1816,13 @@ export default function BillingPage() {
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className="z-50">
-                                    <DropdownMenuRadioGroup value={formEnterprise} onValueChange={(value) => setFormEnterprise(value as Enterprise)}>
+                                    <DropdownMenuRadioGroup value={formEnterprise} onValueChange={(value) => {
+                                        const newEnt = value as Enterprise;
+                                        setFormEnterprise(newEnt);
+                                        if (!editingInvoice) {
+                                            setBillNoSuffix(newEnt === 'RV' ? 'RV' : 'MHE');
+                                        }
+                                    }}>
                                         <DropdownMenuRadioItem value="Vithal" className="text-xs">Vithal</DropdownMenuRadioItem>
                                         <DropdownMenuRadioItem value="RV" className="text-xs">RV</DropdownMenuRadioItem>
                                     </DropdownMenuRadioGroup>
@@ -1819,6 +1833,56 @@ export default function BillingPage() {
                 </DialogHeader>
                 <div className="flex-grow overflow-y-auto px-4 sm:px-6 py-4">
                     <div className="space-y-6">
+                        {/* Bill Number & Series Suffix Selector */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-muted/30 rounded-xl border border-border/60 shadow-2xs">
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-xs font-bold text-foreground">
+                                        Bill Number
+                                    </Label>
+                                    <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono font-bold">
+                                        {editingInvoice ? 'Editing Serial' : (billNoOverride ? 'Manual / Missing' : 'Auto Generated')}
+                                    </Badge>
+                                </div>
+                                <div className="h-9 px-3 rounded-lg border bg-background font-mono font-black text-sm flex items-center text-foreground shadow-2xs">
+                                    #{editingInvoice ? editingInvoice.billNo : (billNoOverride || nextBillNumberForForm || 1)}
+                                </div>
+                            </div>
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                    <Label htmlFor="billNoSuffix" className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                                        <span>Series Suffix</span>
+                                        <span className="text-[10px] text-muted-foreground font-normal">(CN, MHE, MH, RV, etc.)</span>
+                                    </Label>
+                                    <span className="text-[10px] text-primary font-bold font-mono">
+                                        Full No: #{editingInvoice ? editingInvoice.billNo : (billNoOverride || nextBillNumberForForm || 1)}-{(billNoSuffix || (formEnterprise === 'RV' ? 'RV' : 'MHE')).toUpperCase()}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <Input
+                                        id="billNoSuffix"
+                                        value={billNoSuffix}
+                                        onChange={(e) => setBillNoSuffix(e.target.value.toUpperCase())}
+                                        placeholder="e.g. MHE, CN, MH"
+                                        className="h-9 font-mono font-bold text-xs uppercase tracking-wider"
+                                    />
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        {['MHE', 'CN', 'MH', 'RV'].map((preset) => (
+                                            <Button
+                                                key={preset}
+                                                type="button"
+                                                variant={billNoSuffix === preset ? "default" : "outline"}
+                                                size="sm"
+                                                className="h-9 px-2 text-[10px] font-bold"
+                                                onClick={() => setBillNoSuffix(preset)}
+                                            >
+                                                {preset}
+                                            </Button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                             <div className="space-y-2 md:col-span-2">
                                 <Label htmlFor="company" className="text-xs sm:text-sm">Bill To</Label>
@@ -2130,7 +2194,7 @@ export default function BillingPage() {
                 <AlertDialogHeader>
                 <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                 <AlertDialogDescription>
-                    This will permanently delete Invoice No. <span className="font-medium">{invoiceToDelete?.billNo}-MHE</span>.
+                    This will permanently delete Invoice No. <span className="font-medium">{invoiceToDelete?.billNo}-{invoiceToDelete?.billNoSuffix || (invoiceToDelete?.enterprise === 'RV' ? 'RV' : 'MHE')}</span>.
                 </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter className="gap-2 sm:gap-0">
@@ -2198,7 +2262,7 @@ export default function BillingPage() {
                  <DialogHeader className="p-4 sm:p-6 pb-2">
                     <DialogTitle>Invoice Preview</DialogTitle>
                     <DialogDescription className="text-xs">
-                        No. {invoiceForPreview?.billNo}-{invoiceForPreview?.billNoSuffix || 'MHE'}.
+                        No. {invoiceForPreview?.billNo}-{invoiceForPreview?.billNoSuffix || (invoiceForPreview?.enterprise === 'RV' ? 'RV' : 'MHE')}.
                     </DialogDescription>
                 </DialogHeader>
                 <div className={cn("px-4 sm:px-6 pb-6 overflow-y-auto max-h-[80vh]", "hide-scrollbar")}>
@@ -2218,7 +2282,7 @@ export default function BillingPage() {
                 <DialogHeader className="p-4 bg-muted/30 border-b flex flex-col items-start space-y-0.5">
                     <DialogTitle className="text-[10px] font-bold text-muted-foreground uppercase">Invoice Actions</DialogTitle>
                     <DialogDescription className="text-xs font-black text-foreground">
-                        Bill No. {activeInvoiceForAction?.billNo}-{activeInvoiceForAction?.billNoSuffix || 'MHE'}
+                        Bill No. {activeInvoiceForAction?.billNo}-{activeInvoiceForAction?.billNoSuffix || (activeInvoiceForAction?.enterprise === 'RV' ? 'RV' : 'MHE')}
                     </DialogDescription>
                 </DialogHeader>
                 <div className="p-2 grid gap-1">

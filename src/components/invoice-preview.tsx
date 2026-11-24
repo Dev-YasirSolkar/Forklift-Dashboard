@@ -88,7 +88,7 @@ export function InvoicePreview({ invoice, company, myCompanyDetails, downloadOpt
 
       <section className="grid grid-cols-2 gap-4 mb-4">
          <div>
-          <p><span className="font-bold">Bill No:</span> {invoice.billNo}-{invoice.billNoSuffix || 'MHE'}</p>
+          <p><span className="font-bold">Bill No:</span> {invoice.billNo}-{invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE')}</p>
           <p><span className="font-bold">MONTH:</span> {billingMonthDisplay}</p>
         </div>
         <div className="text-right">

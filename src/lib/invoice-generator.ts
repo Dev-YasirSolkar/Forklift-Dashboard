@@ -106,7 +106,7 @@ const generateInvoiceDataForWord = (invoice: Invoice, clientCompany: Company, my
         myCompany: myCompanyDetails,
         selectedBank: invoice.selectedBankAccount,
         billDate: format(parseISO(invoice.billDate), 'dd/MM/yyyy'),
-        billNo: `${invoice.billNo}-${invoice.billNoSuffix || 'MHE'}`.toUpperCase(),
+        billNo: `${invoice.billNo}-${invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE')}`.toUpperCase(),
         poNo: (invoice.poNumber || 'AGREEMENT').toUpperCase(),
         month: invoice.billingMonth
             ? format(parseISO(invoice.billingMonth), 'MMM yyyy').toUpperCase()
@@ -563,7 +563,7 @@ export const generateAndDownloadInvoice = async (
         ? format(parseISO(invoice.billingMonth), 'MMM-yy').toUpperCase()
         : format(parseISO(invoice.billDate), 'MMM-yy').toUpperCase();
     
-    const fileName = `Bill no.${invoice.billNo}-${invoice.billNoSuffix || 'MHE'}-${companyNameForFile}${siteForFile ? `-${siteForFile}` : ''}-(${monthYearForFile})-GST 18.docx`;
+    const fileName = `Bill no.${invoice.billNo}-${invoice.billNoSuffix || (invoice.enterprise === 'RV' ? 'RV' : 'MHE')}-${companyNameForFile}${siteForFile ? `-${siteForFile}` : ''}-(${monthYearForFile})-GST 18.docx`;
 
     const blob = await Packer.toBlob(doc);
     saveAs(blob, fileName);
